@@ -1,14 +1,18 @@
 # Architecture decision (2026-09-19)
 
-Goal: free, open-source, account-less replacement for SteelSeries Sonar's EQ + spatial audio, installable without touching Equalizer APO.
+Goal: free, open-source, account-less way to run a parametric EQ together with the spatial renderer the user already owns (Dolby Atmos for Headphones, DTS Headphone:X, Windows Sonic), installable without touching Equalizer APO. We do not build a spatial renderer.
+
+Why it doesn't exist today: Equalizer APO's EQ is not applied to spatial content (tickets #323, #267), and Sonar requires Atmos/DTS to be switched off.
 
 ## Shape
 
 ```
-game/apps -> virtual 7.1 render endpoint -> [WASAPI loopback capture] -> HRTF 7.1->binaural -> parametric EQ -> [WASAPI render] -> real headset
+game/apps -> virtual render endpoint with Atmos/DTS/Sonic enabled on it -> [WASAPI loopback capture, already binaural] -> parametric EQ -> [WASAPI render] -> real headset (spatial sound off)
 ```
 
-One user-mode engine (Rust, this crate). UI comes later (Tauri, talks to the engine crate).
+One user-mode engine (Rust, this crate). UI comes later (Tauri, talks to the engine crate). EQ sits after the spatial renderer, which is the correct order for headphone correction.
+
+**Verified on hardware (2026-09-19, `examples/probe.rs`):** loopback capture contains the spatial renderer's output. A tone in the back-left channel of a 7.1 stream comes back frequency-shaped with rotating L/R phase, while the same tone as plain stereo comes back flat with a silent R. Which provider was active on the test endpoints was not identified.
 
 ## Why not the alternatives
 
@@ -24,8 +28,8 @@ One user-mode engine (Rust, this crate). UI comes later (Tauri, talks to the eng
 
 | Driver | License | Loads on stock Win11 | 7.1 |
 |---|---|---|---|
-| FxSound `fxvad.sys` | AGPL-3.0 + MS-LPL | yes, WHCP-signed | source allows 8 ch; FxSound calls it hit-and-miss. **Unverified on hardware.** |
-| VB-Cable | closed donationware, bundling allowed with attribution + donation notice | yes | 8 ch per manual |
+| FxSound `fxvad.sys` | AGPL-3.0 + MS-LPL | yes, WHCP-signed | not needed (see DSP). **Open: does it offer the Spatial sound dropdown with Atmos/DTS? Unverified.** |
+| VB-Cable | closed donationware, bundling allowed with attribution + donation notice | yes | not needed; spatial dropdown unverified |
 | Virtual-Audio-Driver | MIT | no (SignPath only) | stereo only |
 | Scream | MS-PL | no (cert expired) | multichannel |
 
@@ -33,9 +37,8 @@ Plan: depend on the signed `fxvad.sys` binary (rebuilding it loses the signature
 
 ## DSP building blocks
 
-- Virtual surround: Steam Audio `iplVirtualSurroundEffect` (Apache-2.0, C API, 7.1 -> binaural, custom SOFA). https://valvesoftware.github.io/steam-audio/doc/capi/virtual-surround-effect.html
-- HRTFs to ship: SADIE II (Apache-2.0), HUTUBS (CC BY). Do not ship HeSuVi's HRIRs (captures of Dolby/DTS/Creative, no license); let users load their own.
 - Headphone presets: AutoEq `ParametricEQ.txt` (MIT code; measurement copyright question open in AutoEq #790). `src/eq.rs` parses this format directly.
+- Spatial: none of ours. Windows spatial sound also advertises 7.1 to games on a stereo endpoint, so the virtual endpoint does not need to be 8-channel.
 
 ## Known ceilings
 
