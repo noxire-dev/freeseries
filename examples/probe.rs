@@ -3,7 +3,7 @@
 //! only (so other playing audio doesn't pollute it), the L/R level gap and phase difference in the
 //! loopback. A matrix downmix gives a constant gap and 0/180 deg phase; an HRTF gives neither.
 //!
-//! cargo run --example probe -- <device#>
+//! cargo run --example probe -- <device#> [measure-on-device#]
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
@@ -11,15 +11,16 @@ use std::sync::{Arc, Mutex};
 const BACK_LEFT: usize = 4; // FL FR FC LFE BL BR SL SR
 
 /// Returns (L level dBFS, L-R gap dB, L-R phase deg) of the loopback while `freq` plays in back-left.
-fn measure(device: &cpal::Device, freq: f64, out_ch: usize, target: usize) -> Result<(f64, f64, f64), Box<dyn std::error::Error>> {
+fn measure(device: &cpal::Device, listen: &cpal::Device, freq: f64, out_ch: usize, target: usize) -> Result<(f64, f64, f64), Box<dyn std::error::Error>> {
     let mix = device.default_output_config()?;
-    let (rate, in_ch) = (mix.sample_rate() as f64, mix.channels() as usize);
+    let heard = listen.default_output_config()?;
+    let (rate, in_ch) = (mix.sample_rate() as f64, heard.channels() as usize);
     let w = std::f64::consts::TAU * freq / rate;
     // Single-bin DFT per channel: [re_l, im_l, re_r, im_r], plus frame count.
     let acc = Arc::new(Mutex::new(([0f64; 4], 0u64)));
     let sink = acc.clone();
-    let capture = device.build_input_stream(
-        mix.config(),
+    let capture = listen.build_input_stream(
+        heard.config(),
         move |data: &[f32], _: &_| {
             let mut a = sink.lock().unwrap();
             for frame in data.chunks_exact(in_ch) {
@@ -62,13 +63,18 @@ fn measure(device: &cpal::Device, freq: f64, out_ch: usize, target: usize) -> Re
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let index: usize = std::env::args().nth(1).ok_or("usage: probe <device#>")?.parse()?;
     let device = cpal::default_host().output_devices()?.nth(index).ok_or("no such device")?;
-    println!("{}", device.description()?.name());
+    // Optional second device: measure the loopback there instead, to test a running engine end to end.
+    let listen = match std::env::args().nth(2) {
+        Some(i) => cpal::default_host().output_devices()?.nth(i.parse()?).ok_or("no such listen device")?,
+        None => device.clone(),
+    };
+    println!("play: {}   measure: {}", device.description()?.name(), listen.description()?.name());
     // Stereo-left is the control: spatial sound leaves stereo streams alone, so anything
     // frequency-dependent there comes from the endpoint's own effects, not the spatial renderer.
     for (label, out_ch, target) in [("stereo L (control)", 2, 0), ("7.1 back-left", 8, BACK_LEFT)] {
         println!("  {label}");
         for freq in [250.0, 500.0, 1000.0, 2000.0, 4000.0] {
-            let (l, gap, phase) = measure(&device, freq, out_ch, target)?;
+            let (l, gap, phase) = measure(&device, &listen, freq, out_ch, target)?;
             println!("  {freq:>6} Hz: L {l:6.1} dBFS   L-R gap {gap:5.1} dB   L-R phase {phase:5.1} deg");
         }
     }
