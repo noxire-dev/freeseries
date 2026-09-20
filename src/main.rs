@@ -23,6 +23,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let devices = Wasapi.outputs()?;
 
+    // `apps`: who has an audio session, and where they are pinned. `pin <pid> <device#|default>`: move one.
+    if args.first().map(String::as_str) == Some("apps") {
+        use freeseries::routing::{AppRouting, WindowsRouting};
+        for app in WindowsRouting.apps()? {
+            let pinned = app.device.as_ref().map(|id| devices.iter().find(|d| &d.id == id).map_or(id.clone(), |d| d.name.clone()));
+            println!("{:>6}  {:<28} {}", app.pid, app.name, pinned.unwrap_or_else(|| "(default device)".into()));
+        }
+        return Ok(());
+    }
+    if args.first().map(String::as_str) == Some("pin") && args.len() == 3 {
+        use freeseries::routing::{AppRouting, WindowsRouting};
+        let target = if args[2] == "default" { None } else { Some(devices.get(args[2].parse::<usize>()?).ok_or("no such device")?.id.clone()) };
+        WindowsRouting.assign(args[1].parse()?, target.as_deref())?;
+        return Ok(());
+    }
     if args.first().map(String::as_str) == Some("headset") {
         println!("Arctis Nova Pro headset online: {:?}", freeseries::arctis::ArctisNovaPro::default().headset_online());
         return Ok(());

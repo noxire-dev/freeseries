@@ -62,6 +62,16 @@ export interface HotkeyApi {
   subscribe(onAction: (action: HotkeyAction) => void): Promise<() => void>;
 }
 
+/** An app with an audio session. `device` is where it is pinned; null means it follows the Windows default. */
+export interface AudioApp { pid: number; name: string; path: string; device: string | null }
+
+/** Which app plays into which device: the per-app output setting of the Windows volume mixer. */
+export interface AppsApi {
+  list(): Promise<AudioApp[]>;
+  /** Pins an app to a device; `null` lets it follow the default again. Windows remembers it per app. */
+  assign(pid: number, device: string | null): Promise<void>;
+}
+
 export interface StartupApi {
   startsWithWindows(): Promise<boolean>;
   /** Rejects with a readable message when it can't be changed (e.g. a development build). */
@@ -153,6 +163,11 @@ export async function tauriHotkeys(): Promise<HotkeyApi> {
     setEnabled: (enabled) => invoke("set_hotkeys", { enabled }),
     subscribe: (onAction) => listen<HotkeyAction>("hotkey", (e) => onAction(e.payload)),
   };
+}
+
+export async function tauriApps(): Promise<AppsApi> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return { list: () => invoke("audio_apps"), assign: (pid, device) => invoke("assign_app", { pid, device }) };
 }
 
 export async function tauriStartup(): Promise<StartupApi> {
@@ -250,6 +265,17 @@ export function mockStartup(): StartupApi {
 export const mockInfo = (): InfoApi => ({ about: async () => ({ version: "0.0.0", commit: "preview", dev: true }) });
 
 export const mockHotkeys = (): HotkeyApi => ({ setEnabled: async () => [], subscribe: async () => () => {} });
+
+export function mockApps(): AppsApi {
+  const apps: AudioApp[] = [
+    { pid: 101, name: "Discord", path: "", device: null },
+    { pid: 102, name: "Discord", path: "", device: null },
+    { pid: 201, name: "chrome", path: "", device: null },
+    { pid: 301, name: "Spotify", path: "", device: null },
+    { pid: 401, name: "VALORANT-Win64-Shipping", path: "", device: null },
+  ];
+  return { list: async () => apps.map((a) => ({ ...a })), assign: async (pid, device) => void (apps.find((a) => a.pid === pid)!.device = device) };
+}
 
 export const mockLog = (): LogApi => ({
   subscribe: async (onEntry) => {

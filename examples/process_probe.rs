@@ -55,6 +55,10 @@ impl Meter {
 /// Child mode: play `freq` into back-left of a 7.1 stream until killed. The tone comes from another
 /// process because that is the real use (capturing a game), and a process may not hear itself.
 fn play_forever(device: &cpal::Device, freq: f64, channels: usize) -> Result<(), Box<dyn std::error::Error>> {
+    play_forever_then(device, freq, channels, || {})
+}
+
+fn play_forever_then(device: &cpal::Device, freq: f64, channels: usize, started: impl FnOnce()) -> Result<(), Box<dyn std::error::Error>> {
     let mix = device.default_output_config()?;
     let w = std::f64::consts::TAU * freq / RATE as f64;
     let mut n = 0u64;
@@ -72,35 +76,68 @@ fn play_forever(device: &cpal::Device, freq: f64, channels: usize) -> Result<(),
         None,
     )?;
     tone.play()?;
+    started();
     loop {
         std::thread::sleep(Duration::from_secs(60));
     }
 }
 
-/// Mutes (or unmutes) every audio session of `pid` on the default render endpoint: what the
-/// Windows Volume Mixer does when you mute one app.
+/// Mutes (or unmutes) every audio session of `pid`, on every playback device: what the Windows
+/// Volume Mixer does when you mute one app. Windows remembers it per app, so tests must undo it.
 fn mute_sessions_of(pid: u32, mute: bool) -> Result<usize, Box<dyn std::error::Error>> {
     use windows::core::Interface;
-    use windows::Win32::Media::Audio::{eConsole, eRender, IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator, ISimpleAudioVolume, MMDeviceEnumerator};
+    use windows::Win32::Media::Audio::{eRender, IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator, ISimpleAudioVolume, MMDeviceEnumerator, DEVICE_STATE_ACTIVE};
     use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED};
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
         let devices: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
-        let manager: IAudioSessionManager2 = devices.GetDefaultAudioEndpoint(eRender, eConsole)?.Activate(CLSCTX_ALL, None)?;
-        let sessions = manager.GetSessionEnumerator()?;
+        let endpoints = devices.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)?;
         let mut touched = 0;
-        for i in 0..sessions.GetCount()? {
-            let session: IAudioSessionControl2 = sessions.GetSession(i)?.cast()?;
-            if session.GetProcessId()? == pid {
-                session.cast::<ISimpleAudioVolume>()?.SetMute(mute, std::ptr::null())?;
-                touched += 1;
+        for e in 0..endpoints.GetCount()? {
+            let manager: IAudioSessionManager2 = endpoints.Item(e)?.Activate(CLSCTX_ALL, None)?;
+            let sessions = manager.GetSessionEnumerator()?;
+            for i in 0..sessions.GetCount()? {
+                let session: IAudioSessionControl2 = sessions.GetSession(i)?.cast()?;
+                if session.GetProcessId()? == pid {
+                    session.cast::<ISimpleAudioVolume>()?.SetMute(mute, std::ptr::null())?;
+                    touched += 1;
+                }
             }
         }
         Ok(touched)
     }
 }
 
+/// `listen <device#> <freq>`: level of `freq` on that device's loopback, without playing anything.
+fn listen(device: &cpal::Device, freq: f64) -> Result<(), Box<dyn std::error::Error>> {
+    let mix = device.default_output_config()?;
+    let meter = Arc::new(Mutex::new(Meter::default()));
+    let (sink, in_ch) = (meter.clone(), mix.channels() as usize);
+    let stream = device.build_input_stream(mix.config(), move |data: &[f32], _: &_| data.chunks_exact(in_ch).for_each(|f| sink.lock().unwrap().push(f[0], f[1])), |_| {}, None)?;
+    stream.play()?;
+    meter.lock().unwrap().start(freq);
+    std::thread::sleep(Duration::from_millis(1500));
+    let frames = meter.lock().unwrap().n;
+    println!("{:<44} {:6.1} dBFS   ({frames} frames heard)", device.description()?.name(), meter.lock().unwrap().read().0);
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("listen") {
+        let device = cpal::default_host().output_devices()?.nth(args[2].parse()?).ok_or("no such device")?;
+        return listen(&device, args[3].parse()?);
+    }
+    // `default <freq> <channels>`: wait, then play on whatever Windows says is this process's default
+    // device. The wait is there so a test can pin this process to a device before it opens audio.
+    if args.get(1).map(String::as_str) == Some("default") {
+        std::thread::sleep(Duration::from_secs(3));
+        let device = cpal::default_host().default_output_device().ok_or("no default device")?;
+        return play_forever_then(&device, args[2].parse()?, args[3].parse()?, || {
+            std::thread::sleep(Duration::from_millis(300));
+            let _ = mute_sessions_of(std::process::id(), false); // undo a mute an earlier test run left on this app
+        });
+    }
     let index: usize = std::env::args().nth(1).ok_or("usage: process_probe <spatial device#>")?.parse()?;
     let device = cpal::default_host().output_devices()?.nth(index).ok_or("no such device")?;
     if let Some(freq) = std::env::args().nth(2) {
@@ -179,6 +216,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         process.lock().unwrap().start(freq);
         std::thread::sleep(Duration::from_millis(1500));
         let (e, p) = (endpoint.lock().unwrap().read(), process.lock().unwrap().read());
+        if muted {
+            mute_sessions_of(player.id(), false)?; // Windows remembers a mute per app: never leave it behind
+        }
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
         let captured = capturing.join().map_err(|_| "capture thread panicked")?;
         player.kill()?;

@@ -6,6 +6,7 @@ use setup::{ScriptSetup, Setup};
 use freeseries::arctis::ArctisNovaPro;
 use freeseries::engine::{AudioBackend, DeviceInfo, Engine, Plan, Status};
 use freeseries::eq::Preset;
+use freeseries::routing::{AppRouting, AudioApp, WindowsRouting};
 use freeseries::wasapi::Wasapi;
 use std::os::windows::process::CommandExt;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -97,6 +98,18 @@ fn name_device(setup: State<Box<dyn Setup>>) -> Result<Vec<String>, String> {
 #[tauri::command(async)]
 fn add_channel_device(setup: State<Box<dyn Setup>>) -> Result<Vec<String>, String> {
     setup.add_channel_device()
+}
+
+/// The apps that are playing, or ready to play, audio.
+#[tauri::command(async)]
+fn audio_apps(routing: State<Box<dyn AppRouting>>) -> Result<Vec<AudioApp>, String> {
+    routing.apps()
+}
+
+/// Pins an app to a device, or with no device lets it follow the Windows default again.
+#[tauri::command(async)]
+fn assign_app(routing: State<Box<dyn AppRouting>>, pid: u32, device: Option<String>) -> Result<(), String> {
+    routing.assign(pid, device.as_deref())
 }
 
 #[tauri::command]
@@ -263,12 +276,15 @@ pub fn run() {
             install_device,
             name_device,
             add_channel_device,
+            audio_apps,
+            assign_app,
             open_sound_settings,
             about,
             set_hotkeys
         ])
         .setup(|app| {
             let resources = app.path().resource_dir()?.join("resources");
+            app.manage(Box::new(WindowsRouting) as Box<dyn AppRouting>);
             app.manage(Box::new(ScriptSetup { script: resources.join("setup.ps1"), package: resources.join("fxvad") }) as Box<dyn Setup>);
             tray(app)?;
             // The window is created hidden; a boot launch leaves it that way.

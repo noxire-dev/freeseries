@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { About, AutoEqApi, AutoEqEntry, Band, Device, InfoApi, Kind, LogEntry, Preset, SetupApi, StartupApi, Status } from "./api";
+import type { About, AppsApi, AudioApp, AutoEqApi, AutoEqEntry, Band, Device, InfoApi, Kind, LogEntry, Preset, SetupApi, StartupApi, Status } from "./api";
 import EqGraph, { bandColor } from "./EqGraph";
 import { DB_RANGE, F_MAX, F_MIN, clamp, combine, formatDb, formatPreset, frequencies, totalGainDb } from "./eqmath";
 import { BUILTIN } from "./builtin";
@@ -822,7 +822,8 @@ export function Setup(p: { setup: SetupApi; detected: Device | undefined; hasOut
 }
 
 export function Mixer(p: {
-  channels: ({ key: string; label: string; device: string } & SavedChannel)[];
+  apps: AppsApi;
+  channels: ({ key: string; label: string; deviceId: string; device: string } & SavedChannel)[];
   sounds: string[];
   balance: number;
   setup: SetupApi;
@@ -876,7 +877,7 @@ export function Mixer(p: {
 
       <h2>Channels</h2>
       <ul className="group">
-        {p.channels.map(({ key, label, device, ...c }) => (
+        {p.channels.map(({ key, label, device, deviceId: _, ...c }) => (
           <li key={key} className={`row mixer-row${c.muted ? " is-unused" : ""}`}>
             <span className="row-title">
               {label}
@@ -896,10 +897,7 @@ export function Mixer(p: {
           </li>
         ))}
       </ul>
-      <p className="hint hint-below">
-        An app belongs to the channel whose device it plays into. Games use the default device. For chat, pick “freeseries Chat” as the output
-        device inside Discord, or for any app in Windows Settings under Sound, Volume mixer.
-      </p>
+      {p.channels.length > 1 && <AppBoard apps={p.apps} channels={p.channels} />}
 
       {!hasChat && (
         <>
@@ -917,5 +915,103 @@ export function Mixer(p: {
         </>
       )}
     </div>
+  );
+}
+
+/** Every running app that plays audio, sorted into the channel it plays into. Drag one across to move it. */
+function AppBoard(p: { apps: AppsApi; channels: { key: string; label: string; deviceId: string }[] }) {
+  const [apps, setApps] = useState<AudioApp[]>([]);
+  const [error, setError] = useState<string>();
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [over, setOver] = useState<string | null>(null);
+
+  const refresh = () => p.apps.list().then(setApps, (e) => setError(String(e)));
+  useEffect(() => {
+    refresh();
+    const poll = setInterval(refresh, 3000); // apps come and go
+    return () => clearInterval(poll);
+  }, [p.apps]);
+
+  // Discord, browsers and games are several processes each: the user thinks in apps, so they move together.
+  const names = [...new Set(apps.map((a) => a.name))];
+  const main = p.channels[0];
+  const channelOf = (name: string) => {
+    const pinned = apps.find((a) => a.name === name && a.device)?.device;
+    return p.channels.find((c) => c.deviceId === pinned) ?? main; // unpinned, or pinned to some other device: it plays with everything else
+  };
+  const move = (name: string, to: string) => {
+    const target = p.channels.find((c) => c.key === to)!;
+    setError(undefined);
+    // The main channel is the Windows default device: moving an app there means un-pinning it.
+    Promise.all(apps.filter((a) => a.name === name).map((a) => p.apps.assign(a.pid, target === main ? null : target.deviceId)))
+      .catch((e) => setError(String(e)))
+      .then(refresh);
+  };
+
+  return (
+    <>
+      <h2>Apps</h2>
+      <p className="hint">Drag an app to the channel it belongs to. Windows remembers it, so you only do this once per app.</p>
+      <div className="board" style={{ gridTemplateColumns: `repeat(${p.channels.length}, minmax(0, 1fr))` }}>
+        {p.channels.map((c) => (
+          <section
+            key={c.key}
+            className={`lane${over === c.key && dragging ? " is-over" : ""}`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+              setOver(c.key);
+            }}
+            onDragLeave={(e) => e.currentTarget.contains(e.relatedTarget as Node) || setOver(null)}
+            onDrop={(e) => {
+              e.preventDefault();
+              if (dragging && channelOf(dragging) !== c) move(dragging, c.key);
+              setDragging(null);
+              setOver(null);
+            }}
+          >
+            <h3>{c.label}</h3>
+            <ul>
+              {names
+                .filter((name) => channelOf(name) === c)
+                .map((name) => (
+                  <li
+                    key={name}
+                    className={`app${dragging === name ? " is-dragging" : ""}`}
+                    draggable
+                    onDragStart={(e) => {
+                      setDragging(name);
+                      e.dataTransfer.effectAllowed = "move";
+                      e.dataTransfer.setData("text/plain", name);
+                    }}
+                    onDragEnd={() => {
+                      setDragging(null);
+                      setOver(null);
+                    }}
+                  >
+                    <span className="app-badge" aria-hidden="true">
+                      {name[0]?.toUpperCase()}
+                    </span>
+                    <span className="app-name">{name}</span>
+                    {/* The same move without a mouse. */}
+                    <select value={c.key} onChange={(e) => move(name, e.target.value)} aria-label={`Channel for ${name}`}>
+                      {p.channels.map((t) => (
+                        <option key={t.key} value={t.key}>
+                          {t.label}
+                        </option>
+                      ))}
+                    </select>
+                  </li>
+                ))}
+            </ul>
+          </section>
+        ))}
+      </div>
+      {error && <p className="notice">{error}</p>}
+      <p className="hint hint-below">
+        Only apps that are playing or ready to play sound show up here. An app picks up its new channel the next time it starts a sound, which
+        for most is straight away.
+      </p>
+    </>
   );
 }
