@@ -1026,6 +1026,13 @@ export function Mixer(p: {
                     key={name}
                     className={`app${dragging === name ? " is-dragging" : ""}`}
                     draggable
+                    // The same move without a mouse: focus the app, then left or right.
+                    tabIndex={0}
+                    aria-label={`${name}, in ${label}. Arrow keys move it to another channel.`}
+                    onKeyDown={(e) => {
+                      const to = p.channels[p.channels.indexOf(strip) + (e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0)];
+                      if (to && to !== strip) move(name, to);
+                    }}
                     onDragStart={(e) => {
                       setDragging(name);
                       e.dataTransfer.effectAllowed = "move";
@@ -1038,16 +1045,6 @@ export function Mixer(p: {
                   >
                     <AppIcon apps={p.apps} name={name} path={apps.find((a) => a.name === name)!.path} />
                     <span className="app-name">{name}</span>
-                    {p.channels.length > 1 && (
-                      // The same move without a mouse.
-                      <select value={key} onChange={(e) => move(name, p.channels.find((t) => t.key === e.target.value)!)} aria-label={`Channel for ${name}`}>
-                        {p.channels.map((t) => (
-                          <option key={t.key} value={t.key}>
-                            {t.label}
-                          </option>
-                        ))}
-                      </select>
-                    )}
                   </li>
                 ))}
                 {mine.length === 0 && <li className="strip-apps-empty">{p.channels.length > 1 ? "Drop apps here" : "Apps playing sound show up here"}</li>}

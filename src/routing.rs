@@ -191,6 +191,9 @@ fn icon_of(path: &str) -> Option<Icon> {
     use windows::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON};
     use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, ICONINFO};
 
+    // The shell hands out one icon at a time: asked from several threads at once, all but one call fail.
+    static SHELL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _one_at_a_time = SHELL.lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
         let mut info = SHFILEINFOW::default();
         let found = SHGetFileInfoW(&HSTRING::from(path), FILE_FLAGS_AND_ATTRIBUTES(0), Some(&mut info), size_of::<SHFILEINFOW>() as u32, SHGFI_ICON | SHGFI_LARGEICON);
@@ -235,5 +238,17 @@ fn icon_of(path: &str) -> Option<Icon> {
         }
         let _ = DestroyIcon(info.hIcon);
         pixels
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// The app asks for every icon at once, from worker threads.
+    #[test]
+    fn icons_survive_being_fetched_in_parallel() {
+        let exes = ["explorer.exe", "notepad.exe", "regedit.exe", r"System32\cmd.exe", r"System32\taskmgr.exe", r"System32\control.exe", r"System32\calc.exe"];
+        let threads: Vec<_> = exes.into_iter().map(|exe| std::thread::spawn(move || (exe, super::icon_of(&format!(r"C:\Windows\{exe}")).is_some()))).collect();
+        let missing: Vec<_> = threads.into_iter().map(|t| t.join().unwrap()).filter(|(_, found)| !found).map(|(exe, _)| exe).collect();
+        assert!(missing.is_empty(), "no icon for {missing:?}");
     }
 }
