@@ -5,5 +5,6 @@ edition = "2024"
 
 [dependencies]
 cpal = "0.18"
+hidapi = { version = "2.6.7", default-features = false, features = ["windows-native"] }
 log = "0.4.34"
 serde = { version = "1.0.229", features = ["derive"] }

@@ -13,6 +13,6 @@ const [engine, win, log, startup] = inTauri
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <App engine={engine} win={win} log={log} startup={startup} autoEq={githubAutoEq()} settings={localSettings()} />
+    <App engine={engine} win={win} log={log} startup={startup} autoStart={!(inTauri && import.meta.env.DEV)} autoEq={githubAutoEq()} settings={localSettings()} />
   </React.StrictMode>,
 );

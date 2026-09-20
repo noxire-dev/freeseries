@@ -23,6 +23,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let devices = Wasapi.outputs()?;
 
+    if args.first().map(String::as_str) == Some("headset") {
+        println!("Arctis Nova Pro headset online: {:?}", freeseries::arctis::ArctisNovaPro::default().headset_online());
+        return Ok(());
+    }
     if args.first().map(String::as_str) != Some("run") || args.len() < 3 {
         for (i, d) in devices.iter().enumerate() {
             println!("{i}: {} ({} ch, {} Hz)", d.name, d.channels, d.sample_rate);

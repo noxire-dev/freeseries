@@ -88,6 +88,17 @@ button {
   letter-spacing: -0.015em;
 }
 
+.brand small {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgb(255 159 10 / 0.18);
+  color: var(--orange);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
 .sidebar nav {
   display: grid;
   gap: 2px;
@@ -658,6 +669,59 @@ button {
   align-items: center;
   gap: 8px;
   margin-top: 20px;
+}
+
+.group-below {
+  margin-top: 8px;
+}
+
+.row-order {
+  width: 16px;
+  color: var(--label-3);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.badge {
+  padding: 1px 8px;
+  border-radius: 9px;
+  background: rgb(48 209 88 / 0.18);
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.icon-button {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+}
+
+.icon-button svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: var(--label-2);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.icon-button:hover:not(:disabled) {
+  background: var(--fill-2);
+}
+
+.icon-button:disabled {
+  opacity: 0.25;
+}
+
+.toolbar-title small {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--label-2);
+  letter-spacing: 0;
 }
 
 .hint-below {

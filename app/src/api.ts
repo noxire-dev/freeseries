@@ -5,14 +5,17 @@ export type Kind = "peak" | "lowShelf" | "highShelf";
 export interface Band { kind: Kind; fc: number; gainDb: number; q: number }
 export interface Preset { preampDb: number; bands: Band[] }
 export interface Device { id: string; name: string; channels: number; sampleRate: number }
-export interface Route { from: string; to: string }
-export type Status = { state: "stopped" } | { state: "running" } | { state: "reconnecting"; error: string };
-export interface Snapshot { status: Status; route: Route | null; preset: Preset; bypass: boolean }
+/** The virtual device apps play into, and the real outputs in order of preference, each with its own EQ. */
+export interface Plan { from: string; outputs: { id: string; preset: Preset }[] }
+export type Status = { state: "stopped" } | { state: "running"; output: string } | { state: "reconnecting"; error: string };
+export interface Snapshot { status: Status; bypass: boolean }
 
 export interface EngineApi {
   listOutputs(): Promise<Device[]>;
   snapshot(): Promise<Snapshot>;
-  setRoute(route: Route | null): Promise<void>;
+  /** `null` stops audio. The engine plays on the first output that is switched on and moves by itself. */
+  setPlan(plan: Plan | null): Promise<void>;
+  /** Live EQ edit for the output that is playing. */
   setPreset(preset: Preset): Promise<void>;
   setBypass(bypass: boolean): Promise<void>;
   parsePreset(text: string): Promise<Preset>;
@@ -83,7 +86,7 @@ export async function tauriEngine(): Promise<EngineApi> {
   return {
     listOutputs: () => invoke("list_outputs"),
     snapshot: () => invoke("snapshot"),
-    setRoute: (route) => invoke("set_route", { route }),
+    setPlan: (plan) => invoke("set_plan", { plan }),
     setPreset: (preset) => invoke("set_preset", { preset }),
     setBypass: (bypass) => invoke("set_bypass", { bypass }),
     parsePreset: (text) => invoke("parse_preset", { text }),
@@ -118,7 +121,7 @@ export async function tauriWindow(): Promise<WindowApi> {
 
 /** Browser preview: a fake engine with the devices of a typical setup. */
 export function mockEngine(): EngineApi {
-  let state: Snapshot = { status: { state: "stopped" }, route: null, preset: { preampDb: 0, bands: [] }, bypass: false };
+  let state: Snapshot = { status: { state: "stopped" }, bypass: false };
   const kinds: Record<string, Kind> = { PK: "peak", LSC: "lowShelf", LS: "lowShelf", HSC: "highShelf", HS: "highShelf" };
   return {
     listOutputs: async () => [
@@ -128,8 +131,8 @@ export function mockEngine(): EngineApi {
       { id: "wasapi:arctis", name: "Headphones (Arctis Nova Pro Wireless)", channels: 2, sampleRate: 48000 },
     ],
     snapshot: async () => state,
-    setRoute: async (route) => void (state = { ...state, route, status: { state: route ? "running" : "stopped" } }),
-    setPreset: async (preset) => void (state = { ...state, preset }),
+    setPlan: async (plan) => void (state = { ...state, status: plan?.outputs.length ? { state: "running", output: plan.outputs[0].id } : { state: "stopped" } }),
+    setPreset: async () => {},
     setBypass: async (bypass) => void (state = { ...state, bypass }),
     parsePreset: async (text) => {
       const preset: Preset = { preampDb: 0, bands: [] };

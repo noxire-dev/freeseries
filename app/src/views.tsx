@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import type { AutoEqApi, AutoEqEntry, Band, Device, Kind, LogEntry, Preset, Route, StartupApi, Status } from "./api";
+import type { AutoEqApi, AutoEqEntry, Band, Device, Kind, LogEntry, Preset, StartupApi, Status } from "./api";
 import EqGraph, { bandColor } from "./EqGraph";
 import { DB_RANGE, F_MAX, F_MIN, clamp, formatDb, frequencies, totalGainDb } from "./eqmath";
 import { BUILTIN } from "./builtin";
-import type { NamedPreset } from "./store";
+import type { NamedPreset, SavedOutput } from "./store";
 
 const KINDS: { kind: Kind; label: string }[] = [
   { kind: "lowShelf", label: "Low shelf" },
@@ -125,6 +125,8 @@ export function Presets(p: {
   autoEq: AutoEqApi;
   library: NamedPreset[];
   current: string;
+  /** The output a chosen preset will be applied to. Undefined when the user hasn't added any yet. */
+  target: string | undefined;
   onLoad(named: NamedPreset): void;
   onLoadAutoEq(entry: AutoEqEntry): Promise<void>;
   onSave(name: string): void;
@@ -149,6 +151,7 @@ export function Presets(p: {
 
   return (
     <div className="page">
+      <p className="hint">{p.target ? `A preset you pick here is applied to ${p.target}.` : "Add an output in Devices first, then pick its preset here."}</p>
       <h2>Included</h2>
       <ul className="group">
         {BUILTIN.map((named) => (
@@ -228,61 +231,114 @@ export function Presets(p: {
   );
 }
 
-export function Devices(p: { devices: Device[]; route: Route | null; status: Status; onRoute(route: Route | null): void; onRefresh(): void }) {
-  const [from, setFrom] = useState(p.route?.from ?? "");
-  const [to, setTo] = useState(p.route?.to ?? "");
-  useEffect(() => {
-    setFrom(p.route?.from ?? from);
-    setTo(p.route?.to ?? to);
-  }, [p.route]);
-  const running = p.route !== null;
-  const ready = from && to && from !== to;
-
-  // While audio runs, picking a device re-routes straight away.
-  const choose = (next: Route) => {
-    setFrom(next.from);
-    setTo(next.to);
-    if (running) p.onRoute(next);
+export function Devices(p: {
+  devices: Device[];
+  detected: Device | undefined;
+  source: string | null;
+  outputs: SavedOutput[];
+  activeId: string | undefined;
+  running: boolean;
+  status: Status;
+  onSource(id: string): void;
+  onOutputs(outputs: SavedOutput[]): void;
+  onRunning(running: boolean): void;
+  onRefresh(): void;
+}) {
+  const virtual = p.detected?.id ?? p.source;
+  const chosen = new Set(p.outputs.map((o) => o.id));
+  const available = p.devices.filter((d) => d.id !== virtual && !chosen.has(d.id));
+  const move = (i: number, by: number) => {
+    const next = [...p.outputs];
+    [next[i], next[i + by]] = [next[i + by], next[i]];
+    p.onOutputs(next);
   };
 
-  const picker = (label: string, help: string, value: string, set: (id: string) => void, other: string) => (
-    <>
-      <h2>{label}</h2>
-      <p className="hint">{help}</p>
-      <ul className="group" role="radiogroup" aria-label={label}>
-        {p.devices.map((d) => (
-          <li key={d.id}>
-            <label className={`row row-choice${d.id === other ? " is-disabled" : ""}`}>
-              <input type="radio" name={label} checked={value === d.id} disabled={d.id === other} onChange={() => set(d.id)} />
+  return (
+    <div className="page">
+      <h2>Apps play into</h2>
+      {p.detected ? (
+        <>
+          <ul className="group">
+            <li className="row">
+              <span className="row-title">{p.detected.name}</span>
+              <span className="row-detail">Found</span>
+            </li>
+          </ul>
+          <p className="hint hint-below">Make this your default output in Windows, and turn spatial sound on for it if you use Atmos or DTS.</p>
+        </>
+      ) : (
+        <>
+          <p className="notice">The freeseries virtual device isn't installed, so there's nothing for your apps to play into yet.</p>
+          <p className="hint hint-below">Already use another virtual cable? Pick it here.</p>
+          <ul className="group" role="radiogroup" aria-label="Virtual device">
+            {p.devices.map((d) => (
+              <li key={d.id}>
+                <label className="row row-choice">
+                  <input type="radio" name="source" checked={p.source === d.id} disabled={chosen.has(d.id)} onChange={() => p.onSource(d.id)} />
+                  <span className="row-title">{d.name}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      <h2>You listen on</h2>
+      <p className="hint">
+        freeseries plays on the first one that's switched on and moves by itself when that changes. Each keeps its own EQ. Leave spatial sound
+        off on these so it isn't applied twice.
+      </p>
+      {p.outputs.length > 0 && (
+        <ol className="group">
+          {p.outputs.map((o, i) => (
+            <li key={o.id} className="row">
+              <span className="row-order">{i + 1}</span>
+              <span className="row-title">{p.devices.find((d) => d.id === o.id)?.name ?? (o.name || "Disconnected device")}</span>
+              {o.id === p.activeId ? <span className="badge">Playing</span> : !p.devices.some((d) => d.id === o.id) && <span className="row-detail">Not connected</span>}
+              <span className="row-detail">{o.presetName}</span>
+              <button className="icon-button" onClick={() => move(i, -1)} disabled={i === 0} aria-label={`Move ${o.name} up`} title="Prefer this one more">
+                <svg viewBox="0 0 12 12"><path d="M2.5 7.5 6 4l3.5 3.5" /></svg>
+              </button>
+              <button className="icon-button" onClick={() => move(i, 1)} disabled={i === p.outputs.length - 1} aria-label={`Move ${o.name} down`} title="Prefer this one less">
+                <svg viewBox="0 0 12 12"><path d="M2.5 4.5 6 8l3.5-3.5" /></svg>
+              </button>
+              <button className="link link-danger" onClick={() => p.onOutputs(p.outputs.filter((x) => x.id !== o.id))}>
+                Remove
+              </button>
+            </li>
+          ))}
+        </ol>
+      )}
+      {available.length > 0 && (
+        <ul className="group group-below">
+          {available.map((d) => (
+            <li key={d.id} className="row">
               <span className="row-title">{d.name}</span>
               <span className="row-detail">
                 {d.channels} ch, {d.sampleRate / 1000} kHz
               </span>
-            </label>
-          </li>
-        ))}
-      </ul>
-    </>
-  );
+              <button className="link" onClick={() => p.onOutputs([...p.outputs, { id: d.id, name: d.name, presetName: "Flat", preset: { preampDb: 0, bands: [] } }])}>
+                Add
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
 
-  return (
-    <div className="page">
-      {picker("Apps play into", "The virtual device. Make it your default output in Windows and turn spatial sound on for it.", from, (id) => choose({ from: id, to }), to)}
-      {picker("You listen on", "Your real headphones. Leave spatial sound off here so it isn't applied twice.", to, (id) => choose({ from, to: id }), from)}
       <div className="actions">
-        {running ? (
-          <button className="button" onClick={() => p.onRoute(null)}>
+        {p.running ? (
+          <button className="button" onClick={() => p.onRunning(false)}>
             Stop
           </button>
         ) : (
-          <button className="button button-primary" disabled={!ready} onClick={() => p.onRoute({ from, to })}>
+          <button className="button button-primary" disabled={!virtual || p.outputs.length === 0} onClick={() => p.onRunning(true)}>
             Start
           </button>
         )}
         <button className="button button-quiet" onClick={p.onRefresh}>
           Refresh devices
         </button>
-        {p.status.state === "reconnecting" && <span className="hint">Reconnecting: {p.status.error}</span>}
+        {p.status.state === "reconnecting" && <span className="hint">{p.status.error}</span>}
       </div>
     </div>
   );

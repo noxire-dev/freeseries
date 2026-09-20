@@ -2,7 +2,7 @@
 
 Wishlist from the first day of real use (2026-09-20), in the order I'd build it. Nothing here is started.
 
-## 1. Outputs that follow you
+## 1. Outputs that follow you (built 2026-09-20, headset-off switch untested on hardware)
 
 One feature, three symptoms:
 
@@ -32,3 +32,7 @@ The expensive one. fxvad gives us exactly one virtual endpoint and we can't ship
 - A second virtual device the user installs themselves (VB-Cable) for chat.
 
 Research spike first, with `examples/probe.rs`-style measurements, before any design.
+
+## Observed, not yet acted on
+
+- **Glitches under heavy CPU load.** The installed app logged three capture glitches at 12:59 on 2026-09-20 while a Rust build was saturating the CPU, and none in the quiet 75 minutes before. The capture and playback callbacks share a mutex'd queue and run at whatever priority cpal gives them. If this shows up while gaming, the fix is the lock-free ring buffer already flagged in `src/wasapi.rs`, plus checking the audio threads register with MMCSS ("Pro Audio").

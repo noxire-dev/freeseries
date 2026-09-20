@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import type { AutoEqApi, Device, EngineApi, LogApi, LogEntry, Preset, Route, StartupApi, Status, WindowApi } from "./api";
-import type { SettingsStore } from "./store";
+import type { AutoEqApi, Device, EngineApi, LogApi, LogEntry, Preset, StartupApi, Status, WindowApi } from "./api";
+import { findVirtualDevice, shortName } from "./devices";
+import type { SavedOutput, SettingsStore } from "./store";
 import { Devices, Equalizer, Log, Presets, Settings } from "./views";
 
 type View = "equalizer" | "presets" | "devices" | "settings" | "log";
@@ -14,15 +15,25 @@ const NAV: { view: View; label: string; icon: string }[] = [
 ];
 
 const STATUS_TEXT: Record<Status["state"], string> = { stopped: "Stopped", running: "Running", reconnecting: "Reconnecting…" };
+const FLAT: Preset = { preampDb: 0, bands: [] };
 
-export default function App(p: { engine: EngineApi; win: WindowApi; log: LogApi; startup: StartupApi; autoEq: AutoEqApi; settings: SettingsStore }) {
+export default function App(p: {
+  engine: EngineApi;
+  win: WindowApi;
+  log: LogApi;
+  startup: StartupApi;
+  autoEq: AutoEqApi;
+  settings: SettingsStore;
+  /** A development build sits next to the installed app, so it must not start playing by itself. */
+  autoStart: boolean;
+}) {
   const { engine, settings } = p;
   const [saved] = useState(() => settings.load());
-  const [view, setView] = useState<View>(saved.route ? "equalizer" : "devices");
+  const [view, setView] = useState<View>(saved.outputs.length ? "equalizer" : "devices");
   const [devices, setDevices] = useState<Device[]>([]);
-  const [route, setRoute] = useState<Route | null>(saved.route);
-  const [preset, setPreset] = useState<Preset>(saved.preset);
-  const [presetName, setPresetName] = useState(saved.presetName);
+  const [source, setSource] = useState<string | null>(saved.source);
+  const [outputs, setOutputs] = useState<SavedOutput[]>(saved.outputs);
+  const [running, setRunning] = useState(saved.running && p.autoStart);
   const [bypass, setBypass] = useState(saved.bypass);
   const [library, setLibrary] = useState(saved.library);
   const [status, setStatus] = useState<Status>({ state: "stopped" });
@@ -36,38 +47,58 @@ export default function App(p: { engine: EngineApi; win: WindowApi; log: LogApi;
     return () => void stop.then((unsubscribe) => unsubscribe());
   }, [p.log]);
 
-  // The engine starts empty on every launch; hand it what was in use last time.
   useEffect(() => {
-    engine.setPreset(saved.preset);
     engine.setBypass(saved.bypass);
-    engine.setRoute(saved.route);
     engine.listOutputs().then(setDevices);
     const poll = setInterval(() => engine.snapshot().then((s) => setStatus(s.status)), 1000);
     return () => clearInterval(poll);
   }, [engine]);
 
-  useEffect(() => settings.save({ route, preset, presetName, bypass, library }), [route, preset, presetName, bypass, library]);
+  useEffect(() => settings.save({ source, outputs, running, bypass, library }), [source, outputs, running, bypass, library]);
+
+  // The virtual device is found by name; `source` only matters when that fails and the user picked one.
+  const virtual = findVirtualDevice(devices)?.id ?? source;
+
+  // The engine gets a new plan when its shape changes, not on every EQ tweak: live edits go
+  // through setPreset, and the engine keeps them with the output that was playing.
+  const latest = useRef(outputs);
+  latest.current = outputs;
+  const activeNow = status.state === "running" ? status.output : undefined;
+  const idle = outputs.filter((o) => o.id !== activeNow).map((o) => o.preset);
+  const shape = running && virtual && outputs.length ? `${virtual}|${outputs.map((o) => o.id).join("|")}|${JSON.stringify(idle)}` : null;
+  useEffect(() => {
+    engine.setPlan(shape && virtual ? { from: virtual, outputs: latest.current.map(({ id, preset }) => ({ id, preset })) } : null);
+  }, [engine, shape]);
+
+  // What the editor shows: the output that is playing, or the preferred one while stopped.
+  const activeId = status.state === "running" ? status.output : undefined;
+  const editing = outputs.find((o) => o.id === activeId) ?? outputs[0];
 
   // Dragging a band fires on every pointer move; the engine only needs the latest per frame.
   const pending = useRef<number>(0);
-  const applyPreset = (next: Preset, name = presetName.endsWith(" (edited)") || presetName === "Flat" ? presetName : `${presetName} (edited)`) => {
-    setPreset(next);
-    setPresetName(next.bands.length || next.preampDb ? name : "Flat");
-    cancelAnimationFrame(pending.current);
-    pending.current = requestAnimationFrame(() => engine.setPreset(next));
+  const applyPreset = (next: Preset, name?: string) => {
+    if (!editing) return;
+    const was = editing.presetName;
+    const presetName = !next.bands.length && !next.preampDb ? "Flat" : (name ?? (was.endsWith(" (edited)") || was === "Flat" ? was : `${was} (edited)`));
+    setOutputs(outputs.map((o) => (o.id === editing.id ? { ...o, preset: next, presetName } : o)));
+    if (editing.id === activeId) {
+      cancelAnimationFrame(pending.current);
+      pending.current = requestAnimationFrame(() => engine.setPreset(next));
+    }
   };
 
-  // "Speakers (FxSound Audio Enhancer)" -> "FxSound Audio Enhancer": the part in brackets is the one that tells devices apart.
-  const deviceName = (id: string) => {
-    const name = devices.find((d) => d.id === id)?.name ?? "Unknown device";
-    return name.match(/\((?:\d+- )?(.+)\)$/)?.[1] ?? name;
-  };
+  const nameOf = (id: string) => shortName(devices.find((d) => d.id === id)?.name ?? outputs.find((o) => o.id === id)?.name ?? "Unknown device");
+  const statusDetail =
+    status.state === "running" ? `Playing on ${nameOf(status.output)}`
+    : status.state === "reconnecting" ? status.error
+    : outputs.length ? "Press Start in Devices" : "Pick your outputs to start";
 
   return (
     <div className="window">
       <aside className="sidebar" data-tauri-drag-region>
         <h1 className="brand" data-tauri-drag-region>
           freeseries
+          {import.meta.env.DEV && <small>dev</small>}
         </h1>
         <nav>
           {NAV.map((n) => (
@@ -83,7 +114,7 @@ export default function App(p: { engine: EngineApi; win: WindowApi; log: LogApi;
           <span className={`status-dot is-${status.state}`} />
           <span>
             <strong>{STATUS_TEXT[status.state]}</strong>
-            <small>{route ? `${deviceName(route.from)} to ${deviceName(route.to)}` : "Pick your devices to start"}</small>
+            <small>{statusDetail}</small>
           </span>
         </button>
       </aside>
@@ -91,9 +122,10 @@ export default function App(p: { engine: EngineApi; win: WindowApi; log: LogApi;
       <main className="main">
         <header className="toolbar" data-tauri-drag-region>
           <h2 className="toolbar-title" data-tauri-drag-region>
-            {view === "equalizer" ? presetName : NAV.find((n) => n.view === view)!.label}
+            {view === "equalizer" ? (editing?.presetName ?? "Equalizer") : NAV.find((n) => n.view === view)!.label}
+            {view === "equalizer" && editing && <small> for {nameOf(editing.id)}</small>}
           </h2>
-          {view === "equalizer" && (
+          {view === "equalizer" && editing && (
             <>
               <div className="segmented" role="radiogroup" aria-label="Compare">
                 {[false, true].map((off) => (
@@ -110,7 +142,7 @@ export default function App(p: { engine: EngineApi; win: WindowApi; log: LogApi;
                   </button>
                 ))}
               </div>
-              <button className="button button-quiet" onClick={() => applyPreset({ preampDb: 0, bands: [] }, "Flat")} disabled={!preset.bands.length && !preset.preampDb}>
+              <button className="button button-quiet" onClick={() => applyPreset(FLAT)} disabled={!editing.preset.bands.length && !editing.preset.preampDb}>
                 Reset
               </button>
             </>
@@ -128,12 +160,25 @@ export default function App(p: { engine: EngineApi; win: WindowApi; log: LogApi;
           </div>
         </header>
 
-        {view === "equalizer" && <Equalizer preset={preset} bypass={bypass} onPreset={applyPreset} />}
+        {view === "equalizer" &&
+          (editing ? (
+            <Equalizer preset={editing.preset} bypass={bypass} onPreset={applyPreset} />
+          ) : (
+            <div className="page">
+              <p className="hint">Add the headphones or speakers you listen on, then come back to tune them.</p>
+              <div className="actions">
+                <button className="button button-primary" onClick={() => setView("devices")}>
+                  Open Devices
+                </button>
+              </div>
+            </div>
+          ))}
         {view === "presets" && (
           <Presets
             autoEq={p.autoEq}
             library={library}
-            current={presetName}
+            current={editing?.presetName ?? ""}
+            target={editing ? nameOf(editing.id) : undefined}
             onLoad={(named) => {
               applyPreset(named.preset, named.name);
               setView("equalizer");
@@ -143,8 +188,9 @@ export default function App(p: { engine: EngineApi; win: WindowApi; log: LogApi;
               setView("equalizer");
             }}
             onSave={(name) => {
-              setLibrary([...library.filter((n) => n.name !== name), { name, preset }]);
-              setPresetName(name);
+              if (!editing) return;
+              setLibrary([...library.filter((n) => n.name !== name), { name, preset: editing.preset }]);
+              setOutputs(outputs.map((o) => (o.id === editing.id ? { ...o, presetName: name } : o)));
             }}
             onDelete={(name) => setLibrary(library.filter((n) => n.name !== name))}
           />
@@ -154,14 +200,19 @@ export default function App(p: { engine: EngineApi; win: WindowApi; log: LogApi;
         {view === "devices" && (
           <Devices
             devices={devices}
-            route={route}
+            detected={findVirtualDevice(devices)}
+            source={source}
+            outputs={outputs}
+            activeId={activeId}
+            running={running}
             status={status}
-            onRefresh={() => engine.listOutputs().then(setDevices)}
-            onRoute={(next) => {
-              setRoute(next);
-              engine.setRoute(next);
-              if (next && !route) setView("equalizer"); // just started: go tune it
+            onSource={setSource}
+            onOutputs={setOutputs}
+            onRunning={(next) => {
+              setRunning(next);
+              if (next) setView("equalizer"); // just started: go tune it
             }}
+            onRefresh={() => engine.listOutputs().then(setDevices)}
           />
         )}
       </main>

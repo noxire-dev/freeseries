@@ -1,11 +1,11 @@
 mod autostart;
 
 use autostart::{Autostart, TaskScheduler};
-use freeseries::engine::{AudioBackend, DeviceInfo, Engine, Route, Status};
+use freeseries::arctis::ArctisNovaPro;
+use freeseries::engine::{AudioBackend, DeviceInfo, Engine, Plan, Status};
 use freeseries::eq::Preset;
 use freeseries::wasapi::Wasapi;
 use std::os::windows::process::CommandExt;
-use std::sync::Mutex;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Manager, State, WindowEvent};
@@ -15,15 +15,12 @@ use tauri_plugin_opener::OpenerExt;
 struct App {
     engine: Engine,
     autostart: Box<dyn Autostart>,
-    route: Mutex<Option<Route>>,
 }
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Snapshot {
     status: Status,
-    route: Option<Route>,
-    preset: Preset,
     bypass: bool,
 }
 
@@ -36,22 +33,20 @@ fn list_outputs() -> Result<Vec<DeviceInfo>, String> {
 fn snapshot(app: State<App>) -> Snapshot {
     Snapshot {
         status: app.engine.status(),
-        route: app.route.lock().unwrap().clone(),
-        preset: app.engine.dsp.preset(),
         bypass: app.engine.dsp.bypassed(),
     }
 }
 
-/// `None` stops audio.
+/// The virtual device plus the user's outputs in order of preference. `None` stops audio.
 #[tauri::command]
-fn set_route(app: State<App>, route: Option<Route>) {
-    *app.route.lock().unwrap() = route.clone();
-    app.engine.set_route(route);
+fn set_plan(app: State<App>, plan: Option<Plan>) {
+    app.engine.set_plan(plan);
 }
 
+/// Live EQ edit for whichever output is playing.
 #[tauri::command]
 fn set_preset(app: State<App>, preset: Preset) {
-    app.engine.dsp.set_preset(preset);
+    app.engine.set_preset(preset);
 }
 
 #[tauri::command]
@@ -152,11 +147,11 @@ pub fn run() {
                 .rotation_strategy(RotationStrategy::KeepSome(3))
                 .build(),
         )
-        .manage(App { engine: Engine::start(Wasapi), autostart: Box::new(TaskScheduler { task: "freeseries", args: MINIMIZED }), route: Mutex::new(None) })
+        .manage(App { engine: Engine::start(Wasapi, ArctisNovaPro::default()), autostart: Box::new(TaskScheduler { task: "freeseries", args: MINIMIZED }) })
         .invoke_handler(tauri::generate_handler![
             list_outputs,
             snapshot,
-            set_route,
+            set_plan,
             set_preset,
             set_bypass,
             parse_preset,
