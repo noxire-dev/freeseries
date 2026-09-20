@@ -1,5 +1,6 @@
 // Runnable check that the drawn curve matches the engine's filters: `npm run check`.
 import { bandGainDb, combine, formatPreset, totalGainDb } from "./eqmath.ts";
+import { migrate } from "./store.ts";
 
 const near = (actual: number, expected: number, what: string) => {
   if (Math.abs(actual - expected) >= 0.1) throw new Error(`${what}: got ${actual.toFixed(2)}, expected ${expected}`);
@@ -20,3 +21,17 @@ if (combine(undefined, sound) !== sound) throw new Error("no correction means th
 const text = formatPreset(both);
 if (text !== "Preamp: -10.5 dB\nFilter 1: ON PK Fc 4875 Hz Gain 6.6 dB Q 1.76\nFilter 2: ON LSC Fc 110 Hz Gain -4.0 dB Q 0.71\n") throw new Error(`unexpected export:\n${text}`);
 console.log("eqmath ok");
+
+// Settings from before the sound moved onto the channels: a channel that named a preset keeps it,
+// the main channel otherwise inherits what the output played, and outputs keep only their correction.
+const curve = { preampDb: -2, bands: [] };
+const stacked = migrate({ outputs: [{ id: "a", name: "A", presetName: "Mine (edited)", preset: curve, correction: null }], channels: { main: { volume: 0.5, muted: false, presetName: "PSense Game" }, chat: { volume: 1, muted: true, presetName: null } } });
+if (stacked.channels!.main.presetName !== "PSense Game" || stacked.channels!.main.preset.preampDb !== -4.5 || stacked.channels!.main.volume !== 0.5) throw new Error(`a channel's own pick wins: ${JSON.stringify(stacked.channels!.main)}`);
+if (stacked.channels!.chat.presetName !== "Flat" || !stacked.channels!.chat.muted) throw new Error(`chat starts flat: ${JSON.stringify(stacked.channels!.chat)}`);
+if ("preset" in stacked.outputs![0]) throw new Error("outputs keep no sound");
+const single = migrate({ outputs: [{ id: "a", name: "A", presetName: "Mine (edited)", preset: curve }] });
+if (single.channels!.main.presetName !== "Mine (edited)" || single.channels!.main.preset !== curve) throw new Error(`main inherits the output's sound: ${JSON.stringify(single.channels)}`);
+const old = migrate({ route: { to: "a" }, presetName: "Bass boost", preset: curve });
+if (old.channels!.main.preset !== curve || old.outputs![0].id !== "a") throw new Error(`0.1.x settings come through: ${JSON.stringify(old)}`);
+const current = { outputs: [{ id: "a", name: "A" }], channels: { main: { volume: 1, muted: false, presetName: "Flat", preset: curve } } };
+if (migrate(current) !== current) throw new Error("current settings are left alone");

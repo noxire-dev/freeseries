@@ -7,7 +7,7 @@ Wishlist from the first day of real use (2026-09-20), in the order I'd build it.
 One feature, three symptoms:
 
 - **No virtual-device picker.** freeseries only works with its own virtual endpoint, so find the FxSound device by name and hide that choice. Keep the picker as a fallback when no such device exists (VB-Cable users).
-- **Per-device EQ.** Each output remembers its own preset: PSense on the Arctis, something else on the monitor.
+- **Per-device correction.** Each output remembers its own headphone correction. (Until 2026-09-20 it also held the sound preset; see "Where the sound lives" below.)
 - **Auto-switch.** A priority list of outputs. Headset turns off -> audio moves to the monitor and its EQ; headset comes back -> audio moves back. The engine already notices a dead output (`Status::Reconnecting`); today it retries the same device forever instead of falling to the next one.
 
 This is also the robustness story: a missing headset must never mean silent audio.
@@ -28,7 +28,7 @@ The EQ editor needs love and the app reads as an open-source project. Do it as a
 
 ## Done 2026-09-20 (second batch)
 
-- **Layered presets.** Each output has a headphone correction (AutoEq, belongs to the device) under a sound preset (what the editor edits, what you switch). The engine gets the two concatenated; the editor draws the correction as a dashed reference line.
+- **Where the sound lives (changed 2026-09-20).** A sound preset belongs to a channel, a headphone correction to an output, and nothing else carries an EQ. Before, the output held a sound preset too and the Mixer let a channel name a second one: both ran in series, so a user with "PSense Game" on the channel and "PSense Media" on the output got two curves and two preamps, 10.6 dB down (found when the user reported low volume; every Windows endpoint volume measured 100% with `examples/volumes.rs`). Now the Equalizer and the Presets page work on one channel, picked with a Game / Chat / Media switch in the toolbar; the Mixer strip's picker sets the same curve and its thumbnail opens the editor on that channel. The engine is unchanged: channel presets travel in the plan (a plan with the same devices retunes the running session), the output preset is the correction alone. Saved settings migrate (`store.ts`, checked by `npm run check`): a channel's own pick wins, otherwise the main channel inherits what the first output played. The editor still draws the active output's correction as a dashed reference line, and headroom is worked out over correction plus sound. The analyser shows the whole mix, not the channel being edited. **Checked in the browser preview only.**
 - **Starter sound presets** written for freeseries: Footsteps, Bass boost, Voice clarity, Late night, each with a preamp that cancels its loudest point.
 - **Import / export** in Equalizer APO `ParametricEQ.txt` text: import from a file, copy the current sound to the clipboard.
 - **Soft limiter** after the EQ (`eq::limit`): identity below -1 dBFS, bends towards full scale above it, no look-ahead so no latency.

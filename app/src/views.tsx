@@ -4,6 +4,7 @@ import EqGraph, { bandColor } from "./EqGraph";
 import { DB_RANGE, F_MAX, F_MIN, clamp, combine, formatDb, formatPreset, frequencies, totalGainDb } from "./eqmath";
 import { BUILTIN } from "./builtin";
 import { isVirtualDevice } from "./devices";
+import { FLAT } from "./store";
 import type { NamedPreset, SavedChannel, SavedOutput } from "./store";
 
 const KINDS: { kind: Kind; label: string }[] = [
@@ -257,8 +258,10 @@ export function Presets(p: {
   autoEq: AutoEqApi;
   library: NamedPreset[];
   current: string;
-  /** The output a chosen preset will be applied to. Undefined when the user hasn't added any yet. */
+  /** The channel a chosen sound goes to. Undefined before the virtual device exists. */
   target: string | undefined;
+  /** The output the correction belongs to. Undefined when the user hasn't added any yet. */
+  output: string | undefined;
   sound: Preset | undefined;
   correction: NamedPreset | null;
   onLoad(named: NamedPreset): void;
@@ -305,19 +308,14 @@ export function Presets(p: {
   if (!p.target) {
     return (
       <div className="page">
-        <p className="hint">Add an output in Devices first, then pick its presets here.</p>
+        <p className="hint">Presets show up once the freeseries audio device is installed.</p>
       </div>
     );
   }
 
   return (
     <div className="page">
-      <p className="hint">
-        Two layers for {p.target}: a correction that makes the headphones themselves sound right, and a sound preset on top that you switch as
-        often as you like. Both apply the moment you pick them.
-      </p>
-
-      <h2>Sound</h2>
+      <h2>Sound for {p.target}</h2>
       <ul className="group">{BUILTIN.map((named) => soundRow(named, false))}</ul>
       <ul className="group group-below">
         {p.library.map((named) => soundRow(named, true))}
@@ -363,7 +361,9 @@ export function Presets(p: {
         <span className="hint">Equalizer APO format, the one Peace and AutoEq use.</span>
       </div>
 
-      <h2>Headphone correction</h2>
+      {p.output && (
+        <>
+      <h2>Headphone correction for {p.output}</h2>
       <ul className="group">
         <li className="row">
           <span className="row-title">{p.correction ? p.correction.name : "None"}</span>
@@ -412,6 +412,8 @@ export function Presets(p: {
             </li>
           ))}
         </ul>
+      )}
+        </>
       )}
     </div>
   );
@@ -519,7 +521,7 @@ export function Devices(p: {
               <span className="row-order">{i + 1}</span>
               <span className="row-title">{p.devices.find((d) => d.id === o.id)?.name ?? (o.name || "Disconnected device")}</span>
               {o.id === p.activeId ? <span className="badge">Playing</span> : !p.devices.some((d) => d.id === o.id) && <span className="row-detail">Not connected</span>}
-              <span className="row-detail">{o.presetName}</span>
+              {o.correction && <span className="row-detail">{o.correction.name}</span>}
               <button className="icon-button" onClick={() => move(i, i - 1)} disabled={i === 0} aria-label={`Move ${o.name} up`} title="Prefer this one more">
                 <svg viewBox="0 0 12 12"><path d="M2.5 7.5 6 4l3.5 3.5" /></svg>
               </button>
@@ -551,7 +553,7 @@ export function Devices(p: {
               <span className="row-detail">
                 {d.channels} ch, {d.sampleRate / 1000} kHz
               </span>
-              <button className="link" onClick={() => p.onOutputs([...p.outputs, { id: d.id, name: d.name, presetName: "Flat", preset: { preampDb: 0, bands: [] } }])}>
+              <button className="link" onClick={() => p.onOutputs([...p.outputs, { id: d.id, name: d.name }])}>
                 Add
               </button>
             </li>
@@ -884,11 +886,13 @@ export function Mixer(p: {
   levels(): Promise<Record<string, number>>;
   channels: Strip[];
   presets: NamedPreset[];
-  output: { name: string; sound: string; playing: boolean } | undefined;
+  output: { name: string; correction: string; playing: boolean } | undefined;
   balance: number;
   setup: SetupApi;
   onBalance(balance: number): void;
   onChannel(key: string, next: SavedChannel): void;
+  /** Open that channel's sound in the Equalizer. */
+  onEdit(key: string): void;
   onRefresh(): void;
 }) {
   const [apps, setApps] = useState<AudioApp[]>([]);
@@ -1011,9 +1015,20 @@ export function Mixer(p: {
               }}
             >
               <div className="strip-eq">
-                <EqThumb preset={p.presets.find((n) => n.name === c.presetName)?.preset} />
-                <select value={c.presetName ?? ""} onChange={(e) => p.onChannel(key, { ...c, presetName: e.target.value || null })} aria-label={`EQ for ${label}`}>
-                  <option value="">No EQ</option>
+                <button className="eq-thumb-button" onClick={() => p.onEdit(key)} title={`Edit the ${label} sound in the Equalizer`} aria-label={`Edit the ${label} sound`}>
+                  <EqThumb preset={c.preset} />
+                </button>
+                <select
+                  value={c.presetName}
+                  onChange={(e) => {
+                    const named = p.presets.find((n) => n.name === e.target.value) ?? { name: "Flat", preset: FLAT };
+                    p.onChannel(key, { ...c, presetName: named.name, preset: named.preset });
+                  }}
+                  aria-label={`Sound for ${label}`}
+                >
+                  {/* A curve tuned by hand is in no list until it is saved. */}
+                  {c.presetName !== "Flat" && !p.presets.some((n) => n.name === c.presetName) && <option>{c.presetName}</option>}
+                  <option>Flat</option>
                   {p.presets.map((n) => (
                     <option key={n.name}>{n.name}</option>
                   ))}
@@ -1099,7 +1114,7 @@ export function Mixer(p: {
             <h3 className="strip-plate">
               {p.output.playing ? "Output" : "Stopped"}
               <small>{p.output.name}</small>
-              <small>{p.output.sound}</small>
+              <small>{p.output.correction}</small>
             </h3>
           </section>
         )}

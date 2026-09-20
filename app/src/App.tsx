@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppsApi, AutoEqApi, Device, EngineApi, HotkeyApi, InfoApi, LogApi, LogEntry, Preset, SetupApi, StartupApi, Status, WindowApi } from "./api";
 import { findVirtualDevice, shortName, virtualChannels } from "./devices";
 import { BUILTIN } from "./builtin";
-import { combine } from "./eqmath";
-import type { SavedChannel, SavedOutput, SettingsStore } from "./store";
+import { DEFAULT_CHANNEL, FLAT } from "./store";
+import type { SavedOutput, SettingsStore } from "./store";
 import { Devices, Equalizer, Log, Mixer, Presets, Settings, Setup } from "./views";
 
 type View = "equalizer" | "mixer" | "presets" | "devices" | "settings" | "log" | "setup";
@@ -22,7 +22,6 @@ const UNDER_SETTINGS = new Set<View>(["log", "setup"]);
 const TITLES: Partial<Record<View, string>> = { log: "Log", setup: "Set up freeseries" };
 
 const STATUS_TEXT: Record<Status["state"], string> = { stopped: "Stopped", running: "Running", reconnecting: "Reconnecting…" };
-const FLAT: Preset = { preampDb: 0, bands: [] };
 
 export default function App(p: {
   engine: EngineApi;
@@ -49,6 +48,7 @@ export default function App(p: {
   const [hotkeysOn, setHotkeysOn] = useState(saved.hotkeys);
   const [mixer, setMixer] = useState(saved.channels);
   const [balance, setBalance] = useState(saved.balance);
+  const [editingKey, setEditingKey] = useState("main");
   const [refused, setRefused] = useState<string[]>([]);
   const [bypass, setBypass] = useState(saved.bypass);
   const [library, setLibrary] = useState(saved.library);
@@ -83,12 +83,11 @@ export default function App(p: {
   // The virtual device is found by name; `source` only matters when that fails and the user picked one.
   const virtual = findVirtualDevice(devices)?.id ?? source;
 
-  // The engine gets a new plan when its shape changes, not on every EQ tweak: live edits go
-  // through setPreset, and the engine keeps them with the output that was playing.
+  // Every channel owns its sound; an output only carries the correction for the device itself.
+  // A plan whose devices are unchanged retunes the running session, so editing a curve is just a new plan.
   // One channel per freeseries virtual device. A manually picked cable (no freeseries device) is one channel too.
   const found = virtualChannels(devices);
   const channels = found.length ? found : virtual ? [{ key: "main", label: "Everything", device: devices.find((d) => d.id === virtual) ?? { id: virtual, name: "", channels: 2, sampleRate: 48000 } }] : [];
-  const DEFAULT_CHANNEL: SavedChannel = { volume: 1, muted: false, presetName: null };
   // Sliders are positions; gains are their square, which is closer to how loudness is heard.
   const gainOf = (key: string) => {
     const c = mixer[key] ?? DEFAULT_CHANNEL;
@@ -100,7 +99,7 @@ export default function App(p: {
     id: c.key,
     from: c.device.id,
     volume: gainOf(c.key),
-    preset: sounds.find((n) => n.name === mixer[c.key]?.presetName)?.preset ?? FLAT,
+    preset: (mixer[c.key] ?? DEFAULT_CHANNEL).preset,
   }));
 
   // With switching off the engine only ever hears about the first output, so it can't move.
@@ -108,38 +107,35 @@ export default function App(p: {
   const latest = useRef({ planned, plannedChannels });
   latest.current = { planned, plannedChannels };
   const activeNow = status.state === "running" ? status.output : undefined;
-  const idle = planned.filter((o) => o.id !== activeNow).map((o) => [o.correction?.preset, o.preset]);
+  const idle = planned.filter((o) => o.id !== activeNow).map((o) => o.correction?.preset);
   const shape = running && plannedChannels.length && planned.length ? `${JSON.stringify(plannedChannels)}|${planned.map((o) => o.id).join("|")}|${JSON.stringify(idle)}` : null;
   useEffect(() => {
     const now = latest.current;
-    engine.setPlan(shape ? { channels: now.plannedChannels, outputs: now.planned.map((o) => ({ id: o.id, preset: combine(o.correction?.preset, o.preset) })) } : null);
+    engine.setPlan(shape ? { channels: now.plannedChannels, outputs: now.planned.map((o) => ({ id: o.id, preset: o.correction?.preset ?? FLAT })) } : null);
   }, [engine, shape]);
 
   // Stable identities: the graph restarts its analyser loop when these change.
   const spectrum = useCallback(() => engine.spectrum(96), [engine]);
   const setAnalysing = useCallback((on: boolean) => void engine.setAnalysing(on), [engine]);
 
-  // What the editor shows: the output that is playing, or the preferred one while stopped.
+  // The output whose correction is shown and changed: the one that is playing, or the preferred one while stopped.
   const activeId = status.state === "running" ? status.output : undefined;
   const editing = outputs.find((o) => o.id === activeId) ?? outputs[0];
+  // The channel the Equalizer and the Presets page work on.
+  const editingChannel = channels.find((c) => c.key === editingKey) ?? channels[0];
+  const sound = (editingChannel && mixer[editingChannel.key]) ?? DEFAULT_CHANNEL;
 
-  // Dragging a band fires on every pointer move; the engine only needs the latest per frame.
-  const pending = useRef<number>(0);
   const applyPreset = (next: Preset, name?: string) => {
-    if (!editing) return;
-    const was = editing.presetName;
+    if (!editingChannel) return;
+    const was = sound.presetName;
     const presetName = !next.bands.length && !next.preampDb ? "Flat" : (name ?? (was.endsWith(" (edited)") || was === "Flat" ? was : `${was} (edited)`));
-    setOutputs(outputs.map((o) => (o.id === editing.id ? { ...o, preset: next, presetName } : o)));
-    if (editing.id === activeId) {
-      cancelAnimationFrame(pending.current);
-      pending.current = requestAnimationFrame(() => engine.setPreset(combine(editing.correction?.preset, next)));
-    }
+    setMixer({ ...mixer, [editingChannel.key]: { ...sound, preset: next, presetName } });
   };
 
   const applyCorrection = (correction: SavedOutput["correction"]) => {
     if (!editing) return;
     setOutputs(outputs.map((o) => (o.id === editing.id ? { ...o, correction } : o)));
-    if (editing.id === activeId) engine.setPreset(combine(correction?.preset, editing.preset));
+    if (editing.id === activeId) engine.setPreset(correction?.preset ?? FLAT);
   };
 
   // Shortcuts arrive while a game has the screen, so they act on the latest state without the
@@ -149,9 +145,8 @@ export default function App(p: {
     if (action === "bypass") {
       setBypass(!bypass);
       engine.setBypass(!bypass);
-    } else if (editing) {
-      const sounds = [...BUILTIN, ...library];
-      const at = sounds.findIndex((n) => n.name === editing.presetName.replace(/ \(edited\)$/, ""));
+    } else if (editingChannel) {
+      const at = sounds.findIndex((n) => n.name === sound.presetName.replace(/ \(edited\)$/, ""));
       const next = sounds[(at + (action === "next-sound" ? 1 : sounds.length - 1)) % sounds.length];
       applyPreset(next.preset, next.name);
     }
@@ -209,10 +204,18 @@ export default function App(p: {
       <main className="main">
         <header className="toolbar" data-tauri-drag-region>
           <h2 className="toolbar-title" data-tauri-drag-region>
-            {view === "equalizer" ? (editing?.presetName ?? "Equalizer") : (TITLES[view] ?? NAV.find((n) => n.view === view)?.label)}
-            {view === "equalizer" && editing && <small> for {nameOf(editing.id)}</small>}
+            {view === "equalizer" && editingChannel ? sound.presetName : (TITLES[view] ?? NAV.find((n) => n.view === view)?.label)}
           </h2>
-          {view === "equalizer" && editing && (
+          {(view === "equalizer" || view === "presets") && channels.length > 1 && (
+            <div className="segmented" role="radiogroup" aria-label="Channel">
+              {channels.map((c) => (
+                <button key={c.key} role="radio" aria-checked={c === editingChannel} onClick={() => setEditingKey(c.key)}>
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {view === "equalizer" && editingChannel && (
             <>
               <div className="segmented" role="radiogroup" aria-label="Compare">
                 {[false, true].map((off) => (
@@ -229,7 +232,7 @@ export default function App(p: {
                   </button>
                 ))}
               </div>
-              <button className="button button-quiet" onClick={() => applyPreset(FLAT)} disabled={!editing.preset.bands.length && !editing.preset.preampDb}>
+              <button className="button button-quiet" onClick={() => applyPreset(FLAT)} disabled={!sound.preset.bands.length && !sound.preset.preampDb}>
                 Reset
               </button>
             </>
@@ -248,12 +251,12 @@ export default function App(p: {
         </header>
 
         {view === "equalizer" &&
-          (editing ? (
+          (editing && editingChannel ? (
             <Equalizer
-              preset={editing.preset}
+              preset={sound.preset}
               correction={editing.correction?.preset}
               bypass={bypass}
-              morphKey={`${editing.id}|${editing.presetName.replace(/ \(edited\)$/, "")}`}
+              morphKey={`${editingChannel.key}|${sound.presetName.replace(/ \(edited\)$/, "")}`}
               onPreset={applyPreset}
               spectrum={spectrum}
               onAnalysing={setAnalysing}
@@ -274,12 +277,16 @@ export default function App(p: {
             apps={p.apps}
             levels={engine.levels}
             presets={sounds}
-            output={editing && { name: nameOf(activeId ?? editing.id), sound: editing.presetName, playing: activeId !== undefined }}
+            output={editing && { name: nameOf(activeId ?? editing.id), correction: editing.correction?.name ?? "No correction", playing: activeId !== undefined }}
             channels={channels.map((c) => ({ key: c.key, label: c.label, deviceId: c.device.id, device: c.device.name.replace(/ \(.*\)$/, ""), ...(mixer[c.key] ?? DEFAULT_CHANNEL) }))} // the name to look for in an app's device list
             balance={balance}
             setup={p.setup}
             onBalance={setBalance}
             onChannel={(key, next) => setMixer({ ...mixer, [key]: next })}
+            onEdit={(key) => {
+              setEditingKey(key);
+              setView("equalizer");
+            }}
             onRefresh={() => engine.listOutputs().then(setDevices)}
           />
         )}
@@ -287,18 +294,19 @@ export default function App(p: {
           <Presets
             autoEq={p.autoEq}
             library={library}
-            current={editing?.presetName ?? ""}
-            target={editing ? nameOf(editing.id) : undefined}
+            current={sound.presetName}
+            target={editingChannel && (channels.length > 1 ? editingChannel.label : "everything you play")}
+            output={editing && nameOf(editing.id)}
             onLoad={(named) => applyPreset(named.preset, named.name)}
-            sound={editing?.preset}
+            sound={sound.preset}
             correction={editing?.correction ?? null}
             onCorrection={applyCorrection}
             onLoadAutoEq={async (entry) => applyCorrection({ name: entry.name, preset: await engine.parsePreset(await p.autoEq.fetchPreset(entry)) })}
             onImport={async (name, text) => applyPreset(await engine.parsePreset(text), name)}
             onSave={(name) => {
-              if (!editing) return;
-              setLibrary([...library.filter((n) => n.name !== name), { name, preset: editing.preset }]);
-              setOutputs(outputs.map((o) => (o.id === editing.id ? { ...o, presetName: name } : o)));
+              if (!editingChannel) return;
+              setLibrary([...library.filter((n) => n.name !== name), { name, preset: sound.preset }]);
+              setMixer({ ...mixer, [editingChannel.key]: { ...sound, presetName: name } });
             }}
             onDelete={(name) => setLibrary(library.filter((n) => n.name !== name))}
           />

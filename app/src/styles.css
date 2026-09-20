@@ -1243,6 +1243,16 @@ select option {
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.06);
 }
 
+.eq-thumb-button {
+  display: block;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.eq-thumb-button:hover .eq-thumb {
+  box-shadow: inset 0 0 0 1px var(--channel);
+}
+
 .eq-thumb path {
   vector-effect: non-scaling-stroke;
 }
