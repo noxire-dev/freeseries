@@ -1,6 +1,6 @@
 //! CLI for the engine, for development and soak testing. The app lives in `src-tauri`.
 
-use freeseries::engine::{AudioBackend, Engine, Route};
+use freeseries::engine::{AlwaysOn, AudioBackend, Engine, Output, Plan};
 use freeseries::{eq, wasapi::Wasapi};
 use std::error::Error;
 use std::time::Duration;
@@ -32,12 +32,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let device = |arg: &str| Ok::<_, Box<dyn Error>>(devices.get(arg.parse::<usize>()?).ok_or("no such device")?.id.clone());
-    let engine = Engine::start(Wasapi);
-    if let Some(path) = args.get(3) {
-        engine.dsp.set_preset(eq::parse(&std::fs::read_to_string(path)?));
-    }
-    println!("{} EQ bands. Ctrl+C to stop.", engine.dsp.preset().bands.len());
-    engine.set_route(Some(Route { from: device(&args[1])?, to: device(&args[2])? }));
+    let preset = match args.get(3) {
+        Some(path) => eq::parse(&std::fs::read_to_string(path)?),
+        None => eq::Preset::default(),
+    };
+    println!("{} EQ bands. Ctrl+C to stop.", preset.bands.len());
+    let engine = Engine::start(Wasapi, AlwaysOn);
+    engine.set_plan(Some(Plan { from: device(&args[1])?, outputs: vec![Output { id: device(&args[2])?, preset }] }));
 
     loop {
         std::thread::sleep(Duration::from_secs(3600));
