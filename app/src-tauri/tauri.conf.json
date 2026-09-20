@@ -41,6 +41,8 @@
     "resources": [
       "resources/setup.ps1",
       "resources/fxvad/*"
-    ]
+    ],
+    "license": "AGPL-3.0-or-later",
+    "licenseFile": "../../LICENSE"
   }
 }
