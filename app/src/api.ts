@@ -6,7 +6,11 @@ export interface Band { kind: Kind; fc: number; gainDb: number; q: number }
 export interface Preset { preampDb: number; bands: Band[] }
 export interface Device { id: string; name: string; channels: number; sampleRate: number }
 /** The virtual device apps play into, and the real outputs in order of preference, each with its own EQ. */
-export interface Plan { from: string; outputs: { id: string; preset: Preset }[] }
+export interface Plan {
+  /** One per virtual device apps play into, each with its own volume (0 to 1, linear) and EQ. Mixed together. */
+  channels: { id: string; from: string; volume: number; preset: Preset }[];
+  outputs: { id: string; preset: Preset }[];
+}
 export type Status = { state: "stopped" } | { state: "running"; output: string } | { state: "reconnecting"; error: string };
 export interface Snapshot { status: Status; bypass: boolean }
 
@@ -36,6 +40,8 @@ export interface SetupApi {
   installDevice(): Promise<string[]>;
   /** Names the device's endpoint "freeseries". No prompt. */
   nameDevice(): Promise<string[]>;
+  /** Installs the virtual device for one more channel (Chat, then Media). Windows asks for permission. */
+  addChannelDevice(): Promise<string[]>;
   openSoundSettings(): Promise<void>;
   /** Id of the output Windows plays to by default. */
   defaultOutput(): Promise<string | null>;
@@ -129,6 +135,7 @@ export async function tauriSetup(): Promise<SetupApi> {
   return {
     installDevice: () => invoke("install_device"),
     nameDevice: () => invoke("name_device"),
+    addChannelDevice: () => invoke("add_channel_device"),
     openSoundSettings: () => invoke("open_sound_settings"),
     defaultOutput: () => invoke("default_output"),
   };
@@ -175,7 +182,7 @@ export async function tauriWindow(): Promise<WindowApi> {
 }
 
 // Browser preview state. `?fresh` previews a PC where nothing is set up yet.
-const preview = { installed: !location.search.includes("fresh"), isDefault: !location.search.includes("fresh") };
+const preview = { installed: !location.search.includes("fresh"), isDefault: !location.search.includes("fresh"), chat: location.search.includes("chat") };
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export const mockSetup = (): SetupApi => ({
@@ -185,6 +192,11 @@ export const mockSetup = (): SetupApi => ({
     return ["driver installed", "endpoint: 'Speakers' -> 'freeseries'"];
   },
   nameDevice: async () => ["endpoint: 'Speakers' -> 'freeseries'"],
+  addChannelDevice: async () => {
+    await wait(1400);
+    preview.chat = true;
+    return ["driver installed", "endpoint: 'Speakers' -> 'freeseries Chat'"];
+  },
   openSoundSettings: async () => void wait(2500).then(() => (preview.isDefault = true)), // "the user" picks it
   defaultOutput: async () => (preview.installed && preview.isDefault ? "wasapi:fx" : "wasapi:rtk"),
 });
@@ -196,6 +208,7 @@ export function mockEngine(): EngineApi {
   return {
     listOutputs: async () => [
       ...(preview.installed ? [{ id: "wasapi:fx", name: "freeseries (FxSound Audio Enhancer)", channels: 2, sampleRate: 48000 }] : []),
+      ...(preview.installed && preview.chat ? [{ id: "wasapi:fx2", name: "freeseries Chat (2- FxSound Audio Enhancer)", channels: 2, sampleRate: 48000 }] : []),
       { id: "wasapi:hdmi", name: "Odyssey G65B (NVIDIA High Definition Audio)", channels: 2, sampleRate: 48000 },
       { id: "wasapi:rtk", name: "Speakers (Realtek(R) Audio)", channels: 2, sampleRate: 48000 },
       { id: "wasapi:arctis", name: "Headphones (Arctis Nova Pro Wireless)", channels: 2, sampleRate: 48000 },

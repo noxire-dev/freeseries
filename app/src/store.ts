@@ -13,6 +13,9 @@ export interface SavedOutput {
   correction?: NamedPreset | null;
 }
 
+/** A channel's mixer settings. Volume is the slider position, 0 to 1. */
+export interface SavedChannel { volume: number; muted: boolean; presetName: string | null }
+
 export interface Saved {
   /** Only set when the virtual device couldn't be found by name and the user picked one. */
   source: string | null;
@@ -23,6 +26,10 @@ export interface Saved {
   autoSwitch: boolean;
   /** Global keyboard shortcuts for bypass and switching the sound preset. */
   hotkeys: boolean;
+  /** Mixer settings by channel key ("main", "chat", ...). */
+  channels: Record<string, SavedChannel>;
+  /** Game / Chat balance: -1 all game, 0 both, +1 all chat. */
+  balance: number;
   bypass: boolean;
   library: NamedPreset[];
 }
@@ -32,7 +39,7 @@ export interface SettingsStore {
   save(saved: Saved): void;
 }
 
-const EMPTY: Saved = { source: null, outputs: [], running: false, autoSwitch: true, hotkeys: true, bypass: false, library: [] };
+const EMPTY: Saved = { source: null, outputs: [], running: false, autoSwitch: true, hotkeys: true, channels: {}, balance: 0, bypass: false, library: [] };
 
 /** 0.1.x stored a single route with one global preset. */
 function migrate(raw: Record<string, any>): Partial<Saved> {

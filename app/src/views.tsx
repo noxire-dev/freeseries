@@ -4,7 +4,7 @@ import EqGraph, { bandColor } from "./EqGraph";
 import { DB_RANGE, F_MAX, F_MIN, clamp, combine, formatDb, formatPreset, frequencies, totalGainDb } from "./eqmath";
 import { BUILTIN } from "./builtin";
 import { isVirtualDevice } from "./devices";
-import type { NamedPreset, SavedOutput } from "./store";
+import type { NamedPreset, SavedChannel, SavedOutput } from "./store";
 
 const KINDS: { kind: Kind; label: string }[] = [
   { kind: "lowShelf", label: "Low shelf" },
@@ -817,6 +817,105 @@ export function Setup(p: { setup: SetupApi; detected: Device | undefined; hasOut
           </>,
         )}
       </ol>
+    </div>
+  );
+}
+
+export function Mixer(p: {
+  channels: ({ key: string; label: string; device: string } & SavedChannel)[];
+  sounds: string[];
+  balance: number;
+  setup: SetupApi;
+  onBalance(balance: number): void;
+  onChannel(key: string, next: SavedChannel): void;
+  onRefresh(): void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [error, setError] = useState<string>();
+  const hasChat = p.channels.some((c) => c.key === "chat");
+  const add = () => {
+    setAdding(true);
+    setError(undefined);
+    p.setup
+      .addChannelDevice()
+      .then(p.onRefresh, (e) => setError(String(e)))
+      .finally(() => setAdding(false));
+  };
+
+  if (p.channels.length === 0) {
+    return (
+      <div className="page">
+        <p className="hint">The mixer shows up once the freeseries audio device is installed.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="page">
+      {hasChat && (
+        <>
+          <h2>Game and chat</h2>
+          <div className="group balance">
+            <span>Game</span>
+            <input
+              type="range"
+              min={-1}
+              max={1}
+              step={0.02}
+              value={p.balance}
+              onChange={(e) => p.onBalance(Math.abs(e.target.valueAsNumber) < 0.06 ? 0 : e.target.valueAsNumber)}
+              onDoubleClick={() => p.onBalance(0)}
+              aria-label="Game and chat balance"
+              title="Double-click to centre"
+            />
+            <span>Chat</span>
+          </div>
+          <p className="hint hint-below">Turn it towards one side and the other gets quieter. In the middle both play at full volume.</p>
+        </>
+      )}
+
+      <h2>Channels</h2>
+      <ul className="group">
+        {p.channels.map(({ key, label, device, ...c }) => (
+          <li key={key} className={`row mixer-row${c.muted ? " is-unused" : ""}`}>
+            <span className="row-title">
+              {label}
+              <small>{device}</small>
+            </span>
+            <select value={c.presetName ?? ""} onChange={(e) => p.onChannel(key, { ...c, presetName: e.target.value || null })} aria-label={`EQ for ${label}`}>
+              <option value="">No channel EQ</option>
+              {p.sounds.map((name) => (
+                <option key={name}>{name}</option>
+              ))}
+            </select>
+            <input type="range" min={0} max={1} step={0.01} value={c.volume} onChange={(e) => p.onChannel(key, { ...c, volume: e.target.valueAsNumber })} aria-label={`${label} volume`} />
+            <output>{Math.round(c.volume * 100)}%</output>
+            <button className="button" aria-pressed={c.muted} onClick={() => p.onChannel(key, { ...c, muted: !c.muted })}>
+              {c.muted ? "Unmute" : "Mute"}
+            </button>
+          </li>
+        ))}
+      </ul>
+      <p className="hint hint-below">
+        An app belongs to the channel whose device it plays into. Games use the default device. For chat, pick “freeseries Chat” as the output
+        device inside Discord, or for any app in Windows Settings under Sound, Volume mixer.
+      </p>
+
+      {!hasChat && (
+        <>
+          <h2>A separate chat channel</h2>
+          <p className="hint">
+            Adds a second virtual device, “freeseries Chat”, so voice chat gets its own volume and EQ and the Game and chat balance. Same
+            Microsoft-signed driver as the first one; Windows asks for permission once.
+          </p>
+          <div className="actions actions-tight">
+            <button className="button button-primary" onClick={add} disabled={adding}>
+              {adding ? "Waiting for Windows…" : "Add the chat device"}
+            </button>
+          </div>
+          {error && <p className="notice">{error}</p>}
+        </>
+      )}
     </div>
   );
 }

@@ -1113,6 +1113,80 @@ kbd {
   white-space: nowrap;
 }
 
+input[type="range"]:not(.preamp input) {
+  appearance: none;
+  height: 20px;
+  background: none;
+}
+
+input[type="range"]:not(.preamp input)::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--fill-3);
+}
+
+input[type="range"]:not(.preamp input)::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  margin-top: -7px;
+  border-radius: 50%;
+  background: linear-gradient(#fff, #d4d4d6);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.55), 0 0 0 0.5px rgb(0 0 0 / 0.45);
+}
+
+.balance {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  font-weight: 500;
+}
+
+.balance input {
+  flex: 1;
+}
+
+.mixer-row .row-title small {
+  display: block;
+  font-size: 11px;
+  color: var(--label-2);
+}
+
+.mixer-row input[type="range"] {
+  width: 180px;
+  flex: none;
+}
+
+.mixer-row output {
+  width: 38px;
+  text-align: right;
+  color: var(--label-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.mixer-row .button {
+  width: 74px;
+  flex: none;
+}
+
+select {
+  height: 28px;
+  max-width: 150px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--fill-2);
+  box-shadow: var(--raised);
+  color: inherit;
+  font: inherit;
+  app-region: no-drag;
+}
+
+select option {
+  background: #2c2c2e;
+}
+
 .hint-below {
   margin-top: 8px;
 }

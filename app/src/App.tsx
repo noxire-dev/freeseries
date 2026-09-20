@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AutoEqApi, Device, EngineApi, HotkeyApi, InfoApi, LogApi, LogEntry, Preset, SetupApi, StartupApi, Status, WindowApi } from "./api";
-import { findVirtualDevice, shortName } from "./devices";
+import { findVirtualDevice, shortName, virtualChannels } from "./devices";
 import { BUILTIN } from "./builtin";
 import { combine } from "./eqmath";
-import type { SavedOutput, SettingsStore } from "./store";
-import { Devices, Equalizer, Log, Presets, Settings, Setup } from "./views";
+import type { SavedChannel, SavedOutput, SettingsStore } from "./store";
+import { Devices, Equalizer, Log, Mixer, Presets, Settings, Setup } from "./views";
 
-type View = "equalizer" | "presets" | "devices" | "settings" | "log" | "setup";
+type View = "equalizer" | "mixer" | "presets" | "devices" | "settings" | "log" | "setup";
 
 const NAV: { view: View; label: string; icon: string }[] = [
   { view: "equalizer", label: "Equalizer", icon: "M4 7h9m4 0h3M4 17h3m4 0h9M15 4.5v5M9 14.5v5" },
+  { view: "mixer", label: "Mixer", icon: "M6 4v7m0 4v5M12 4v3m0 4v9M18 4v9m0 4v3M4 11h4M10 7h4M16 13h4" },
   { view: "presets", label: "Presets", icon: "M5 6h14M5 12h14M5 18h9" },
   { view: "devices", label: "Devices", icon: "M5 18v-5a7 7 0 0 1 14 0v5M5 14.5h2.5v5H5zM16.5 14.5H19v5h-2.5z" },
   { view: "settings", label: "Settings", icon: "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z" },
@@ -45,6 +46,8 @@ export default function App(p: {
   const [running, setRunning] = useState(saved.running && p.autoStart);
   const [autoSwitch, setAutoSwitch] = useState(saved.autoSwitch);
   const [hotkeysOn, setHotkeysOn] = useState(saved.hotkeys);
+  const [mixer, setMixer] = useState(saved.channels);
+  const [balance, setBalance] = useState(saved.balance);
   const [refused, setRefused] = useState<string[]>([]);
   const [bypass, setBypass] = useState(saved.bypass);
   const [library, setLibrary] = useState(saved.library);
@@ -70,7 +73,10 @@ export default function App(p: {
     return () => clearInterval(poll);
   }, [engine]);
 
-  useEffect(() => settings.save({ source, outputs, running, autoSwitch, hotkeys: hotkeysOn, bypass, library }), [source, outputs, running, autoSwitch, hotkeysOn, bypass, library]);
+  useEffect(
+    () => settings.save({ source, outputs, running, autoSwitch, hotkeys: hotkeysOn, channels: mixer, balance, bypass, library }),
+    [source, outputs, running, autoSwitch, hotkeysOn, mixer, balance, bypass, library],
+  );
   useEffect(() => void p.hotkeys.setEnabled(hotkeysOn).then(setRefused, () => {}), [p.hotkeys, hotkeysOn]);
 
   // The virtual device is found by name; `source` only matters when that fails and the user picked one.
@@ -78,15 +84,34 @@ export default function App(p: {
 
   // The engine gets a new plan when its shape changes, not on every EQ tweak: live edits go
   // through setPreset, and the engine keeps them with the output that was playing.
+  // One channel per freeseries virtual device. A manually picked cable (no freeseries device) is one channel too.
+  const found = virtualChannels(devices);
+  const channels = found.length ? found : virtual ? [{ key: "main", label: "Everything", device: devices.find((d) => d.id === virtual) ?? { id: virtual, name: "", channels: 2, sampleRate: 48000 } }] : [];
+  const DEFAULT_CHANNEL: SavedChannel = { volume: 1, muted: false, presetName: null };
+  // Sliders are positions; gains are their square, which is closer to how loudness is heard.
+  const gainOf = (key: string) => {
+    const c = mixer[key] ?? DEFAULT_CHANNEL;
+    const pull = key === "chat" ? Math.min(0, balance) : key === "main" ? Math.min(0, -balance) : 0; // the balance only ever turns one side down
+    return c.muted ? 0 : (c.volume * (1 + pull)) ** 2;
+  };
+  const sounds = [...BUILTIN, ...library];
+  const plannedChannels = channels.map((c) => ({
+    id: c.key,
+    from: c.device.id,
+    volume: gainOf(c.key),
+    preset: sounds.find((n) => n.name === mixer[c.key]?.presetName)?.preset ?? FLAT,
+  }));
+
   // With switching off the engine only ever hears about the first output, so it can't move.
   const planned = autoSwitch ? outputs : outputs.slice(0, 1);
-  const latest = useRef(planned);
-  latest.current = planned;
+  const latest = useRef({ planned, plannedChannels });
+  latest.current = { planned, plannedChannels };
   const activeNow = status.state === "running" ? status.output : undefined;
   const idle = planned.filter((o) => o.id !== activeNow).map((o) => [o.correction?.preset, o.preset]);
-  const shape = running && virtual && planned.length ? `${virtual}|${planned.map((o) => o.id).join("|")}|${JSON.stringify(idle)}` : null;
+  const shape = running && plannedChannels.length && planned.length ? `${JSON.stringify(plannedChannels)}|${planned.map((o) => o.id).join("|")}|${JSON.stringify(idle)}` : null;
   useEffect(() => {
-    engine.setPlan(shape && virtual ? { from: virtual, outputs: latest.current.map((o) => ({ id: o.id, preset: combine(o.correction?.preset, o.preset) })) } : null);
+    const now = latest.current;
+    engine.setPlan(shape ? { channels: now.plannedChannels, outputs: now.planned.map((o) => ({ id: o.id, preset: combine(o.correction?.preset, o.preset) })) } : null);
   }, [engine, shape]);
 
   // Stable identities: the graph restarts its analyser loop when these change.
@@ -243,6 +268,17 @@ export default function App(p: {
               </div>
             </div>
           ))}
+        {view === "mixer" && (
+          <Mixer
+            channels={channels.map((c) => ({ key: c.key, label: c.label, device: c.device.name.replace(/ \(.*\)$/, ""), ...(mixer[c.key] ?? DEFAULT_CHANNEL) }))} // the name to look for in an app's device list
+            sounds={sounds.map((n) => n.name)}
+            balance={balance}
+            setup={p.setup}
+            onBalance={setBalance}
+            onChannel={(key, next) => setMixer({ ...mixer, [key]: next })}
+            onRefresh={() => engine.listOutputs().then(setDevices)}
+          />
+        )}
         {view === "presets" && (
           <Presets
             autoEq={p.autoEq}

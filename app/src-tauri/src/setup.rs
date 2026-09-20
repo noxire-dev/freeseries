@@ -14,6 +14,8 @@ pub trait Setup: Send + Sync {
     fn install_device(&self) -> Result<Vec<String>, String>;
     /// Names the endpoint of an already installed driver. No prompt.
     fn name_device(&self) -> Result<Vec<String>, String>;
+    /// Installs one more instance of the driver (UAC prompt): the virtual device behind another channel.
+    fn add_channel_device(&self) -> Result<Vec<String>, String>;
 }
 
 pub struct ScriptSetup {
@@ -28,14 +30,15 @@ fn quoted(value: &str) -> String {
 
 /// The command that starts the script elevated and waits for it. 1223 is ERROR_CANCELLED: the user
 /// said no to the UAC prompt.
-fn elevated_command(script: &str, package: &str, result: &str) -> String {
-    let args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", &format!("\"{script}\""), "-Pkg", &format!("\"{package}\""), "-Result", &format!("\"{result}\"")];
-    let list = args.iter().map(|a| quoted(a)).collect::<Vec<_>>().join(",");
+fn elevated_command(script: &str, package: &str, result: &str, extra: &[&str]) -> String {
+    let (script, package, result) = (format!("\"{script}\""), format!("\"{package}\""), format!("\"{result}\""));
+    let args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", &script, "-Pkg", &package, "-Result", &result];
+    let list = args.iter().chain(extra).map(|a| quoted(a)).collect::<Vec<_>>().join(",");
     format!("try {{ $p = Start-Process powershell.exe -Verb RunAs -Wait -PassThru -WindowStyle Hidden -ArgumentList {list}; exit $p.ExitCode }} catch {{ exit 1223 }}")
 }
 
 impl ScriptSetup {
-    fn run(&self, elevated: bool) -> Result<Vec<String>, String> {
+    fn run(&self, elevated: bool, extra: &[&str]) -> Result<Vec<String>, String> {
         let result = std::env::temp_dir().join("freeseries-setup-result.txt");
         let _ = std::fs::remove_file(&result);
         let (script, package, result_arg) = (self.script.to_string_lossy(), self.package.to_string_lossy(), result.to_string_lossy());
@@ -43,9 +46,9 @@ impl ScriptSetup {
         let mut powershell = Command::new("powershell.exe");
         powershell.creation_flags(CREATE_NO_WINDOW).args(["-NoProfile", "-ExecutionPolicy", "Bypass"]);
         if elevated {
-            powershell.args(["-Command", &elevated_command(&script, &package, &result_arg)]);
+            powershell.args(["-Command", &elevated_command(&script, &package, &result_arg, extra)]);
         } else {
-            powershell.args(["-File", &script, "-Pkg", &package, "-Result", &result_arg, "-RenameOnly"]);
+            powershell.args(["-File", &script, "-Pkg", &package, "-Result", &result_arg]).args(extra);
         }
         let status = powershell.status().map_err(|e| format!("Couldn't start PowerShell: {e}"))?;
         if status.code() == Some(1223) {
@@ -70,11 +73,15 @@ impl ScriptSetup {
 
 impl Setup for ScriptSetup {
     fn install_device(&self) -> Result<Vec<String>, String> {
-        self.run(true)
+        self.run(true, &[])
     }
 
     fn name_device(&self) -> Result<Vec<String>, String> {
-        self.run(false)
+        self.run(false, &["-RenameOnly"])
+    }
+
+    fn add_channel_device(&self) -> Result<Vec<String>, String> {
+        self.run(true, &["-AddInstance"])
     }
 }
 
@@ -84,11 +91,12 @@ mod tests {
 
     #[test]
     fn elevated_command_survives_spaces_and_apostrophes() {
-        let cmd = elevated_command(r"C:\Users\Dara O'Neil\App Data\setup.ps1", r"C:\pkg dir", r"C:\Temp\r.txt");
+        let cmd = elevated_command(r"C:\Users\Dara O'Neil\App Data\setup.ps1", r"C:\pkg dir", r"C:\Temp\r.txt", &["-AddInstance"]);
         // Paths with spaces stay one argument (inner double quotes), apostrophes are doubled.
         assert!(cmd.contains(r#"'"C:\Users\Dara O''Neil\App Data\setup.ps1"'"#), "{cmd}");
         assert!(cmd.contains(r#"'-Pkg','"C:\pkg dir"'"#), "{cmd}");
         assert!(cmd.contains("-Verb RunAs -Wait"));
+        assert!(cmd.contains(r#""C:\Temp\r.txt"','-AddInstance'"#), "{cmd}");
         assert!(cmd.ends_with("catch { exit 1223 }"));
     }
 }

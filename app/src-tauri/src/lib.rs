@@ -93,6 +93,12 @@ fn name_device(setup: State<Box<dyn Setup>>) -> Result<Vec<String>, String> {
     setup.name_device()
 }
 
+/// Installs the virtual device behind one more channel (Chat, Media). Shows a UAC prompt.
+#[tauri::command(async)]
+fn add_channel_device(setup: State<Box<dyn Setup>>) -> Result<Vec<String>, String> {
+    setup.add_channel_device()
+}
+
 #[tauri::command]
 fn open_sound_settings(app: tauri::AppHandle) -> Result<(), String> {
     app.opener().open_url("ms-settings:sound", None::<&str>).map_err(|e| e.to_string())
@@ -256,6 +262,7 @@ pub fn run() {
             default_output,
             install_device,
             name_device,
+            add_channel_device,
             open_sound_settings,
             about,
             set_hotkeys
