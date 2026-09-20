@@ -55,6 +55,14 @@ export interface InfoApi {
   about(): Promise<About>;
 }
 
+/** The way in for an AI agent: a local MCP endpoint whose messages are answered by the UI (`agent.ts`). */
+export interface AgentApi {
+  /** Opens or closes the endpoint. Resolves to its URL while open. Rejects when the port is taken. */
+  setEnabled(enabled: boolean, token: string): Promise<string | null>;
+  /** `answer` gets every JSON-RPC message and resolves to the response, or null for a notification. */
+  subscribe(answer: (message: string) => Promise<string | null>): Promise<() => void>;
+}
+
 export type HotkeyAction = "previous-sound" | "next-sound" | "bypass";
 
 export interface HotkeyApi {
@@ -173,6 +181,21 @@ export async function tauriHotkeys(): Promise<HotkeyApi> {
   };
 }
 
+export async function tauriAgent(): Promise<AgentApi> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  const { listen } = await import("@tauri-apps/api/event");
+  return {
+    setEnabled: (enabled, token) => invoke("set_agent", { enabled, token }),
+    subscribe: (answer) =>
+      listen<{ id: number; message: string }>("agent-request", (e) =>
+        answer(e.payload.message).then(
+          (message) => invoke("agent_reply", { id: e.payload.id, message }),
+          () => {}, // no reply: the endpoint answers 503 by itself
+        ),
+      ),
+  };
+}
+
 export async function tauriApps(): Promise<AppsApi> {
   const { invoke } = await import("@tauri-apps/api/core");
   return { list: () => invoke("audio_apps"), assign: (pid, device) => invoke("assign_app", { pid, device }), icon: (path) => invoke("app_icon", { path }) };
@@ -279,6 +302,15 @@ export function mockStartup(): StartupApi {
 }
 
 export const mockInfo = (): InfoApi => ({ about: async () => ({ version: "0.0.0", commit: "preview", dev: true }) });
+
+/** No endpoint in the browser preview; `window.agent(message)` talks to the same handler instead. */
+export const mockAgent = (): AgentApi => ({
+  setEnabled: async (enabled) => (enabled ? "http://127.0.0.1:47630/mcp" : null),
+  subscribe: async (answer) => {
+    (window as any).agent = answer;
+    return () => void ((window as any).agent === answer && delete (window as any).agent); // a later subscriber stays
+  },
+});
 
 export const mockHotkeys = (): HotkeyApi => ({ setEnabled: async () => [], subscribe: async () => () => {} });
 

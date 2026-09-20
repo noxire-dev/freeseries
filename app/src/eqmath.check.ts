@@ -35,3 +35,39 @@ const old = migrate({ route: { to: "a" }, presetName: "Bass boost", preset: curv
 if (old.channels!.main.preset !== curve || old.outputs![0].id !== "a") throw new Error(`0.1.x settings come through: ${JSON.stringify(old)}`);
 const current = { outputs: [{ id: "a", name: "A" }], channels: { main: { volume: 1, muted: false, presetName: "Flat", preset: curve } } };
 if (migrate(current) !== current) throw new Error("current settings are left alone");
+
+// The agent's door: MCP handshake, tool listing, a checked and clamped set_eq with its automatic preamp.
+import { createAgent, toPreset } from "./agent.ts";
+import type { AgentHost } from "./agent.ts";
+const applied: { channel: string; name: string; preset: ReturnType<typeof toPreset> }[] = [];
+const host = {
+  state: () => ({ running: true, bypass: false, channels: [{ key: "main", label: "Game", presetName: "Flat", preset: { preampDb: 0, bands: [] }, volume: 1, muted: false }], output: null, presets: ["Footsteps"] }),
+  setSound: (channel: string, name: string, preset: ReturnType<typeof toPreset>) => void applied.push({ channel, name, preset }),
+  usePreset: () => false,
+} as unknown as AgentHost;
+const agent = createAgent(host, "0.0.0");
+const rpc = async (method: string, params?: unknown, notify = false) => JSON.parse((await agent(JSON.stringify({ jsonrpc: "2.0", ...(!notify && { id: 1 }), method, params }))) ?? "null");
+
+const hello = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "check", version: "0" } });
+if (hello.result.protocolVersion !== "2025-06-18" || !hello.result.capabilities.tools) throw new Error(`initialize: ${JSON.stringify(hello)}`);
+if ((await rpc("initialize", { protocolVersion: "1999-01-01" })).result.protocolVersion !== "2025-11-25") throw new Error("an unknown version gets our latest");
+if ((await rpc("notifications/initialized", undefined, true)) !== null) throw new Error("notifications get no answer");
+if ((await rpc("tools/list")).result.tools.length !== 7) throw new Error("seven tools");
+if ((await rpc("nope")).error.code !== -32601) throw new Error("unknown method");
+if ((await rpc("tools/call", { name: "nope" })).error.code !== -32602) throw new Error("unknown tool");
+
+const set = await rpc("tools/call", { name: "set_eq", arguments: { channel: "game", name: "Test", bands: [{ type: "peak", fc: 3000, gain_db: 4 }, { type: "peak", fc: 5, gain_db: -40, q: 99 }, { type: "high_shelf", fc: 9000, gain_db: -2 }] } });
+if (set.result.isError) throw new Error(`set_eq: ${set.result.content[0].text}`);
+const made = applied[0].preset;
+if (applied[0].channel !== "main" || applied[0].name !== "Test") throw new Error("set_eq finds the channel by its label");
+if (made.bands[0].q !== 1.41 || made.bands[1].fc !== 20 || made.bands[1].gainDb !== -18 || made.bands[1].q !== 10 || made.bands[2].kind !== "highShelf" || made.bands[2].q !== 0.71) throw new Error(`defaults and clamps: ${JSON.stringify(made)}`);
+near(made.preampDb, -4, "automatic preamp cancels the loudest boost");
+near(JSON.parse(set.result.content[0].text).loudest_point_db, 0, "so the loudest point sits at 0 dB");
+for (const bad of [{ channel: "nope", bands: [] }, { channel: "main", bands: [{ type: "notch", fc: 1000, gain_db: 1 }] }, { channel: "main", bands: [{ type: "peak", fc: "1k", gain_db: 1 }] }, { channel: "main", bands: new Array(21).fill({ type: "peak", fc: 1000, gain_db: 1 }) }]) {
+  const refused = await rpc("tools/call", { name: "set_eq", arguments: bad });
+  if (!refused.result.isError) throw new Error(`should have been refused: ${JSON.stringify(bad)}`);
+}
+if (applied.length !== 1) throw new Error("a refused set_eq changes nothing");
+const missing = await rpc("tools/call", { name: "use_preset", arguments: { channel: "main", name: "Nope" } });
+if (!missing.result.isError || !missing.result.content[0].text.includes("Footsteps")) throw new Error("a missing preset names the ones there are");
+if ((await agent("{")) === null || JSON.parse((await agent("{"))!).error.code !== -32700) throw new Error("parse error");

@@ -1,3 +1,4 @@
+mod agent;
 mod autostart;
 mod setup;
 
@@ -19,6 +20,70 @@ use tauri_plugin_opener::OpenerExt;
 struct App {
     engine: Engine,
     autostart: Box<dyn Autostart>,
+    /// The MCP endpoint, while the user has agent access switched on.
+    agent: std::sync::Mutex<Option<agent::Server>>,
+}
+
+/// A development build runs next to the installed app, so it listens next door.
+const AGENT_PORT: u16 = if cfg!(debug_assertions) { 47631 } else { 47630 };
+/// Long enough for a tool that listens to the audio for a while.
+const AGENT_PATIENCE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Carries an agent's messages to the UI, where the tools live, and the answers back.
+#[derive(Default)]
+struct UiBridge {
+    app: std::sync::OnceLock<tauri::AppHandle>,
+    waiting: std::sync::Mutex<std::collections::HashMap<u64, std::sync::mpsc::Sender<Option<String>>>>,
+    next: std::sync::atomic::AtomicU64,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct AgentRequest {
+    id: u64,
+    message: String,
+}
+
+impl agent::Handler for UiBridge {
+    fn handle(&self, message: String) -> agent::Reply {
+        let Some(app) = self.app.get() else { return agent::Reply::Unavailable };
+        let id = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let (answer, answered) = std::sync::mpsc::channel();
+        self.waiting.lock().unwrap().insert(id, answer);
+        let sent = app.emit("agent-request", AgentRequest { id, message });
+        let reply = sent.ok().and_then(|_| answered.recv_timeout(AGENT_PATIENCE).ok());
+        self.waiting.lock().unwrap().remove(&id);
+        match reply {
+            Some(Some(json)) => agent::Reply::Json(json),
+            Some(None) => agent::Reply::Accepted,
+            None => agent::Reply::Unavailable,
+        }
+    }
+}
+
+/// The UI's answer to an "agent-request". No message: it was a notification.
+#[tauri::command]
+fn agent_reply(bridge: State<std::sync::Arc<UiBridge>>, id: u64, message: Option<String>) {
+    if let Some(answer) = bridge.waiting.lock().unwrap().remove(&id) {
+        let _ = answer.send(message);
+    }
+}
+
+/// Opens or closes the MCP endpoint. Returns its URL while open.
+#[tauri::command]
+fn set_agent(app: State<App>, bridge: State<std::sync::Arc<UiBridge>>, enabled: bool, token: String) -> Result<Option<String>, String> {
+    let mut server = app.agent.lock().unwrap();
+    *server = None; // frees the port before it is taken again
+    if !enabled {
+        return Ok(None);
+    }
+    if token.len() < 16 {
+        return Err("agent access needs a token".into());
+    }
+    let started = agent::Server::start(AGENT_PORT, token, bridge.inner().clone()).map_err(|e| format!("Couldn't open port {AGENT_PORT} for agents: {e}"))?;
+    log::info!("agent access on at {}", started.url());
+    let url = started.url();
+    *server = Some(started);
+    Ok(Some(url))
 }
 
 #[derive(serde::Serialize)]
@@ -271,7 +336,7 @@ pub fn run() {
                 .rotation_strategy(RotationStrategy::KeepSome(3))
                 .build(),
         )
-        .manage(App { engine: Engine::start(Wasapi, ArctisNovaPro::default()), autostart: Box::new(TaskScheduler { task: "freeseries", args: MINIMIZED }) })
+        .manage(App { engine: Engine::start(Wasapi, ArctisNovaPro::default()), autostart: Box::new(TaskScheduler { task: "freeseries", args: MINIMIZED }), agent: Default::default() })
         .invoke_handler(tauri::generate_handler![
             list_outputs,
             snapshot,
@@ -294,10 +359,15 @@ pub fn run() {
             assign_app,
             open_sound_settings,
             about,
-            set_hotkeys
+            set_hotkeys,
+            set_agent,
+            agent_reply
         ])
         .setup(|app| {
             let resources = app.path().resource_dir()?.join("resources");
+            let bridge = std::sync::Arc::new(UiBridge::default());
+            let _ = bridge.app.set(app.handle().clone());
+            app.manage(bridge);
             app.manage(Box::new(WindowsRouting) as Box<dyn AppRouting>);
             app.manage(Box::new(ScriptSetup { script: resources.join("setup.ps1"), package: resources.join("fxvad") }) as Box<dyn Setup>);
             tray(app)?;

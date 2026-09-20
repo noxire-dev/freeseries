@@ -33,6 +33,9 @@ export interface Saved {
   balance: number;
   bypass: boolean;
   library: NamedPreset[];
+  /** Let an AI agent in through the local MCP endpoint. The token is made the first time this is switched on. */
+  agent: boolean;
+  agentToken: string;
 }
 
 export interface SettingsStore {
@@ -40,7 +43,7 @@ export interface SettingsStore {
   save(saved: Saved): void;
 }
 
-const EMPTY: Saved = { source: null, outputs: [], running: false, autoSwitch: true, hotkeys: true, channels: {}, balance: 0, bypass: false, library: [] };
+const EMPTY: Saved = { source: null, outputs: [], running: false, autoSwitch: true, hotkeys: true, channels: {}, balance: 0, bypass: false, library: [], agent: false, agentToken: "" };
 
 /** 0.1.x stored a single route with one global preset. */
 function fromRoute(raw: Record<string, any>): Record<string, any> {

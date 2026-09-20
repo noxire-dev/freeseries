@@ -622,6 +622,8 @@ export function Settings(p: {
   hotkeys: boolean;
   refusedHotkeys: string[];
   onHotkeys(enabled: boolean): void;
+  agent: { on: boolean; url: string | null; token: string; error: string | undefined };
+  onAgent(enabled: boolean): void;
   onSetup(): void;
   onLog(): void;
   onOpenLogFolder(): void;
@@ -630,6 +632,8 @@ export function Settings(p: {
   const [about, setAbout] = useState<About>();
   useEffect(() => void p.info.about().then(setAbout, () => {}), [p.info]);
   const [error, setError] = useState<string>();
+  const [copied, setCopied] = useState(false);
+  const connect = p.agent.url && `claude mcp add --transport http freeseries ${p.agent.url} --header "Authorization: Bearer ${p.agent.token}"`;
   useEffect(() => {
     p.startup.startsWithWindows().then(setEnabled, (e) => setError(String(e)));
   }, [p.startup]);
@@ -678,6 +682,35 @@ export function Settings(p: {
           </li>
         ))}
       </ul>
+
+      <h2>AI agents</h2>
+      <ul className="group">
+        <li>
+          <label className="row">
+            <span className="row-title">Let an agent tune your sound</span>
+            <input type="checkbox" role="switch" className="switch" checked={p.agent.on} onChange={(e) => p.onAgent(e.target.checked)} />
+          </label>
+        </li>
+        {connect && (
+          <li className="row">
+            <span className="row-title">Connect Claude Code</span>
+            <button className="button" onClick={() => navigator.clipboard.writeText(connect).then(() => (setCopied(true), setTimeout(() => setCopied(false), 2000)))}>
+              {copied ? "Copied" : "Copy command"}
+            </button>
+          </li>
+        )}
+      </ul>
+      {p.agent.url && (
+        <p className="hint hint-below">
+          Any other MCP client: <span className="row-selectable">{p.agent.url}</span> with the header <span className="row-selectable">Authorization: Bearer {p.agent.token}</span>
+        </p>
+      )}
+      <p className="hint hint-below">
+        Tell an agent what you listen on and what bothers you, and it tunes the EQ with you: it can read your setup, measure what is playing, change a
+        channel's sound, and look up the correction for your headphones. It can't install anything or touch other apps. Only programs on this PC
+        that have the token can connect. What it replaces is kept in Presets as “(before agent)”.
+      </p>
+      {p.agent.error && <p className="notice">{p.agent.error}</p>}
 
       <h2>Audio device</h2>
       <ul className="group">

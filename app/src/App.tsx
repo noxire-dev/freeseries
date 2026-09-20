@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AppsApi, AutoEqApi, Device, EngineApi, HotkeyApi, InfoApi, LogApi, LogEntry, Preset, SetupApi, StartupApi, Status, WindowApi } from "./api";
+import type { AgentApi, AppsApi, AutoEqApi, Device, EngineApi, HotkeyApi, InfoApi, LogApi, LogEntry, Preset, SetupApi, StartupApi, Status, WindowApi } from "./api";
 import { findVirtualDevice, shortName, virtualChannels } from "./devices";
 import { BUILTIN } from "./builtin";
+import { createAgent } from "./agent";
+import type { AgentHost } from "./agent";
 import { DEFAULT_CHANNEL, FLAT } from "./store";
 import type { SavedOutput, SettingsStore } from "./store";
 import { Devices, Equalizer, Log, Mixer, Presets, Settings, Setup } from "./views";
@@ -32,6 +34,7 @@ export default function App(p: {
   info: InfoApi;
   hotkeys: HotkeyApi;
   apps: AppsApi;
+  agent: AgentApi;
   autoEq: AutoEqApi;
   settings: SettingsStore;
   /** A development build sits next to the installed app, so it must not start playing by itself. */
@@ -52,6 +55,10 @@ export default function App(p: {
   const [refused, setRefused] = useState<string[]>([]);
   const [bypass, setBypass] = useState(saved.bypass);
   const [library, setLibrary] = useState(saved.library);
+  const [agentOn, setAgentOn] = useState(saved.agent);
+  const [agentToken, setAgentToken] = useState(saved.agentToken);
+  const [agentUrl, setAgentUrl] = useState<string | null>(null);
+  const [agentError, setAgentError] = useState<string>();
   const [status, setStatus] = useState<Status>({ state: "stopped" });
   const [entries, setEntries] = useState<(LogEntry & { time: string })[]>([]);
 
@@ -75,8 +82,8 @@ export default function App(p: {
   }, [engine]);
 
   useEffect(
-    () => settings.save({ source, outputs, running, autoSwitch, hotkeys: hotkeysOn, channels: mixer, balance, bypass, library }),
-    [source, outputs, running, autoSwitch, hotkeysOn, mixer, balance, bypass, library],
+    () => settings.save({ source, outputs, running, autoSwitch, hotkeys: hotkeysOn, channels: mixer, balance, bypass, library, agent: agentOn, agentToken }),
+    [source, outputs, running, autoSwitch, hotkeysOn, mixer, balance, bypass, library, agentOn, agentToken],
   );
   useEffect(() => void p.hotkeys.setEnabled(hotkeysOn).then(setRefused, () => {}), [p.hotkeys, hotkeysOn]);
 
@@ -132,6 +139,19 @@ export default function App(p: {
     setMixer({ ...mixer, [editingChannel.key]: { ...sound, preset: next, presetName } });
   };
 
+  /** An agent's write. A curve tuned by hand that was never saved goes into the presets first, so it can't be lost. */
+  const replaceSound = (key: string, name: string, preset: Preset) => {
+    const channel = mixer[key] ?? DEFAULT_CHANNEL;
+    if (channel.presetName.endsWith(" (edited)")) {
+      const backup = `${channel.presetName.replace(/ \(edited\)$/, "")} (before agent)`;
+      setLibrary([...library.filter((n) => n.name !== backup), { name: backup, preset: channel.preset }]);
+    }
+    setMixer({ ...mixer, [key]: { ...channel, presetName: name, preset } });
+  };
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const analyserOff = useRef(0);
+
   const applyCorrection = (correction: SavedOutput["correction"]) => {
     if (!editing) return;
     setOutputs(outputs.map((o) => (o.id === editing.id ? { ...o, correction } : o)));
@@ -155,6 +175,56 @@ export default function App(p: {
     const stop = p.hotkeys.subscribe((action) => onHotkey.current(action));
     return () => void stop.then((unsubscribe) => unsubscribe());
   }, [p.hotkeys]);
+
+  // An agent's tools act on whatever the state is when they are called, through the same setters as the UI.
+  const agentHost = useRef<AgentHost>(null!);
+  agentHost.current = {
+    state: () => ({
+      running: activeId !== undefined,
+      bypass,
+      channels: channels.map((c) => ({ key: c.key, label: c.label, ...(mixer[c.key] ?? DEFAULT_CHANNEL) })),
+      output: editing ? { name: nameOf(editing.id), correction: editing.correction ?? null } : null,
+      presets: sounds.map((n) => n.name),
+    }),
+    setSound: (key, name, preset) => replaceSound(key, name, preset),
+    usePreset: (key, name) => {
+      const named = name === "Flat" ? { name, preset: FLAT } : sounds.find((n) => n.name === name);
+      if (named) replaceSound(key, named.name, named.preset);
+      return !!named;
+    },
+    savePreset: (key, name) => {
+      const channel = mixer[key] ?? DEFAULT_CHANNEL;
+      setLibrary([...library.filter((n) => n.name !== name), { name, preset: channel.preset }]);
+      setMixer({ ...mixer, [key]: { ...channel, presetName: name } });
+    },
+    // The analyser only runs while someone looks at it; the Equalizer page keeps it on for itself.
+    spectrum: async (bands) => {
+      engine.setAnalysing(true);
+      clearTimeout(analyserOff.current);
+      analyserOff.current = window.setTimeout(() => viewRef.current !== "equalizer" && engine.setAnalysing(false), 1500);
+      return engine.spectrum(bands);
+    },
+    searchHeadphones: async (query) => {
+      const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+      return (await p.autoEq.index()).filter((e) => words.every((w) => e.name.toLowerCase().includes(w))).slice(0, 20).map((e) => e.name);
+    },
+    useCorrection: async (name) => {
+      if (name === null) return applyCorrection(null), true;
+      const entry = (await p.autoEq.index()).find((e) => e.name === name);
+      if (entry) applyCorrection({ name: entry.name, preset: await engine.parsePreset(await p.autoEq.fetchPreset(entry)) });
+      return !!entry;
+    },
+  };
+  useEffect(() => {
+    const version = p.info.about().then((a) => a.version, () => "unknown");
+    const answer = async (message: string) => createAgent(agentHost.current, await version)(message);
+    const stop = p.agent.subscribe(answer);
+    return () => void stop.then((unsubscribe) => unsubscribe());
+  }, [p.agent, p.info]);
+  useEffect(() => {
+    setAgentError(undefined);
+    p.agent.setEnabled(agentOn && !!agentToken, agentToken).then(setAgentUrl, (e) => (setAgentUrl(null), setAgentError(String(e))));
+  }, [p.agent, agentOn, agentToken]);
 
   const nameOf = (id: string) => shortName(devices.find((d) => d.id === id)?.name ?? outputs.find((o) => o.id === id)?.name ?? "Unknown device");
   const statusDetail =
@@ -319,6 +389,11 @@ export default function App(p: {
             hotkeys={hotkeysOn}
             refusedHotkeys={refused}
             onHotkeys={setHotkeysOn}
+            agent={{ on: agentOn, url: agentUrl, token: agentToken, error: agentError }}
+            onAgent={(on) => {
+              if (on && !agentToken) setAgentToken(crypto.randomUUID().replace(/-/g, ""));
+              setAgentOn(on);
+            }}
             onSetup={() => setView("setup")}
             onLog={() => setView("log")}
             onOpenLogFolder={p.log.openFolder}
