@@ -287,12 +287,13 @@ export function Presets(p: {
   );
 
   const soundRow = (named: NamedPreset, removable: boolean) => (
-    <li key={named.name} className="row">
+    <li key={named.name} className={`row${p.current === named.name ? " is-current" : ""}`}>
+      <svg className="check" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6.5 5 9l4.5-5.5" /></svg>
       <span className="row-title">{named.name}</span>
       <span className="row-detail">
         {named.preset.bands.length} {named.preset.bands.length === 1 ? "band" : "bands"}
       </span>
-      {p.current === named.name ? <span className="row-detail">In use</span> : <button className="link" onClick={() => p.onLoad(named)}>Use</button>}
+      {p.current === named.name ? <span className="row-state">In use</span> : <button className="link" onClick={() => p.onLoad(named)}>Use</button>}
       {removable && (
         <button className="icon-button is-danger" onClick={() => p.onDelete(named.name)} aria-label={`Delete ${named.name}`} title="Delete">
           <svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" /></svg>
@@ -387,11 +388,12 @@ export function Presets(p: {
       {results.length > 0 && (
         <ul className="group">
           {results.map((entry) => (
-            <li key={entry.path} className="row">
+            <li key={entry.path} className={`row${p.correction?.name === entry.name ? " is-current" : ""}`}>
+              <svg className="check" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6.5 5 9l4.5-5.5" /></svg>
               <span className="row-title">{entry.name}</span>
               <span className="row-detail">{entry.source}</span>
               {p.correction?.name === entry.name && loading !== entry.path ? (
-                <span className="row-detail">In use</span>
+                <span className="row-state">In use</span>
               ) : (
                 <button
                   className="link"
@@ -971,6 +973,7 @@ function AppBoard(p: { apps: AppsApi; channels: { key: string; label: string; de
             }}
           >
             <h3>{c.label}</h3>
+            {names.every((name) => channelOf(name) !== c) && <p className="lane-empty">Drop apps here</p>}
             <ul>
               {names
                 .filter((name) => channelOf(name) === c)

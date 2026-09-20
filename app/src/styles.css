@@ -97,10 +97,14 @@ a,
 .window {
   display: grid;
   grid-template-columns: 208px minmax(0, 1fr);
+  /* Without an explicit row the implicit one is `auto`: it grows with a long page instead of
+     letting the page scroll, and the window clips whatever is below the fold. */
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
 }
 
 .sidebar {
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -256,6 +260,7 @@ a,
   display: grid;
   grid-template-rows: 52px minmax(0, 1fr);
   min-width: 0;
+  min-height: 0;
 }
 
 .toolbar {
@@ -311,6 +316,10 @@ a,
 /* Controls */
 
 .button {
+  /* Also used on a <label> (the file picker): inline-flex keeps every kind the same height and baseline. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   height: 28px;
   padding: 0 12px;
   border-radius: var(--radius-control);
@@ -886,6 +895,34 @@ a,
   white-space: nowrap;
 }
 
+/* The preset in use: a tick where the row starts, and its state in the accent colour. */
+.check {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-right: -2px;
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  visibility: hidden;
+}
+
+.row.is-current .check {
+  visibility: visible;
+}
+
+.row.is-current .row-title {
+  font-weight: 600;
+}
+
+.row-state {
+  color: var(--accent);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
 .row-detail {
   color: var(--label-2);
   font-variant-numeric: tabular-nums;
@@ -1211,6 +1248,20 @@ select option {
   font-size: 12px;
   font-weight: 600;
   color: var(--label-2);
+}
+
+.lane-empty {
+  display: grid;
+  place-items: center;
+  min-height: 72px;
+  border-radius: 7px;
+  border: 1px dashed rgb(255 255 255 / 0.14);
+  color: var(--label-3);
+}
+
+.lane.is-over .lane-empty {
+  border-color: var(--accent);
+  color: var(--label);
 }
 
 .lane ul {
