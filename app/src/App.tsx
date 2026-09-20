@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AutoEqApi, Device, EngineApi, InfoApi, LogApi, LogEntry, Preset, SetupApi, StartupApi, Status, WindowApi } from "./api";
 import { findVirtualDevice, shortName } from "./devices";
+import { combine } from "./eqmath";
 import type { SavedOutput, SettingsStore } from "./store";
 import { Devices, Equalizer, Log, Presets, Settings, Setup } from "./views";
 
@@ -77,10 +78,10 @@ export default function App(p: {
   const latest = useRef(planned);
   latest.current = planned;
   const activeNow = status.state === "running" ? status.output : undefined;
-  const idle = planned.filter((o) => o.id !== activeNow).map((o) => o.preset);
+  const idle = planned.filter((o) => o.id !== activeNow).map((o) => [o.correction?.preset, o.preset]);
   const shape = running && virtual && planned.length ? `${virtual}|${planned.map((o) => o.id).join("|")}|${JSON.stringify(idle)}` : null;
   useEffect(() => {
-    engine.setPlan(shape && virtual ? { from: virtual, outputs: latest.current.map(({ id, preset }) => ({ id, preset })) } : null);
+    engine.setPlan(shape && virtual ? { from: virtual, outputs: latest.current.map((o) => ({ id: o.id, preset: combine(o.correction?.preset, o.preset) })) } : null);
   }, [engine, shape]);
 
   // Stable identities: the graph restarts its analyser loop when these change.
@@ -100,8 +101,14 @@ export default function App(p: {
     setOutputs(outputs.map((o) => (o.id === editing.id ? { ...o, preset: next, presetName } : o)));
     if (editing.id === activeId) {
       cancelAnimationFrame(pending.current);
-      pending.current = requestAnimationFrame(() => engine.setPreset(next));
+      pending.current = requestAnimationFrame(() => engine.setPreset(combine(editing.correction?.preset, next)));
     }
+  };
+
+  const applyCorrection = (correction: SavedOutput["correction"]) => {
+    if (!editing) return;
+    setOutputs(outputs.map((o) => (o.id === editing.id ? { ...o, correction } : o)));
+    if (editing.id === activeId) engine.setPreset(combine(correction?.preset, editing.preset));
   };
 
   const nameOf = (id: string) => shortName(devices.find((d) => d.id === id)?.name ?? outputs.find((o) => o.id === id)?.name ?? "Unknown device");
@@ -194,6 +201,7 @@ export default function App(p: {
           (editing ? (
             <Equalizer
               preset={editing.preset}
+              correction={editing.correction?.preset}
               bypass={bypass}
               morphKey={`${editing.id}|${editing.presetName.replace(/ \(edited\)$/, "")}`}
               onPreset={applyPreset}
@@ -218,9 +226,11 @@ export default function App(p: {
             current={editing?.presetName ?? ""}
             target={editing ? nameOf(editing.id) : undefined}
             onLoad={(named) => applyPreset(named.preset, named.name)}
-            onLoadAutoEq={async (entry) => {
-              applyPreset(await engine.parsePreset(await p.autoEq.fetchPreset(entry)), entry.name);
-            }}
+            sound={editing?.preset}
+            correction={editing?.correction ?? null}
+            onCorrection={applyCorrection}
+            onLoadAutoEq={async (entry) => applyCorrection({ name: entry.name, preset: await engine.parsePreset(await p.autoEq.fetchPreset(entry)) })}
+            onImport={async (name, text) => applyPreset(await engine.parsePreset(text), name)}
             onSave={(name) => {
               if (!editing) return;
               setLibrary([...library.filter((n) => n.name !== name), { name, preset: editing.preset }]);

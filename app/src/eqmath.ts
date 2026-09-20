@@ -53,3 +53,17 @@ export function formatHz(hz: number): string {
 export function formatDb(db: number): string {
   return `${db > 0 ? "+" : db < 0 ? "−" : ""}${Math.abs(db).toFixed(1)} dB`;
 }
+
+/** A headphone correction with a sound preset on top: all bands in series, preamps added. */
+export function combine(correction: Preset | undefined, sound: Preset): Preset {
+  if (!correction) return sound;
+  return { preampDb: Math.round((correction.preampDb + sound.preampDb) * 10) / 10, bands: [...correction.bands, ...sound.bands] };
+}
+
+const CODES = { peak: "PK", lowShelf: "LSC", highShelf: "HSC" } as const;
+
+/** Equalizer APO / AutoEq `ParametricEQ.txt` text, so presets travel to and from Peace, Equalizer APO and AutoEq. */
+export function formatPreset(preset: Preset): string {
+  const lines = preset.bands.map((b, i) => `Filter ${i + 1}: ON ${CODES[b.kind]} Fc ${Math.round(b.fc)} Hz Gain ${b.gainDb.toFixed(1)} dB Q ${b.q.toFixed(2)}`);
+  return [`Preamp: ${preset.preampDb.toFixed(1)} dB`, ...lines].join("\n") + "\n";
+}

@@ -3,7 +3,15 @@ import type { Preset } from "./api";
 export interface NamedPreset { name: string; preset: Preset }
 
 /** One of the user's real outputs, with the EQ that belongs to it. */
-export interface SavedOutput { id: string; name: string; presetName: string; preset: Preset }
+export interface SavedOutput {
+  id: string;
+  name: string;
+  /** The sound preset: what the editor edits and the Presets page switches. */
+  presetName: string;
+  preset: Preset;
+  /** Headphone correction (AutoEq). Belongs to the device, stays put when the sound preset changes. */
+  correction?: NamedPreset | null;
+}
 
 export interface Saved {
   /** Only set when the virtual device couldn't be found by name and the user picked one. */

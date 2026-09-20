@@ -24,6 +24,8 @@ const RELEASE_DB = 0.9; // per frame: bars fall at ~27 dB/s, rise at once
 
 interface Props {
   preset: Preset;
+  /** A fixed curve underneath (the headphone correction), drawn for reference only. */
+  base?: Preset;
   selected: number | null;
   bypass: boolean;
   /** False while a preset change is animating: what's drawn isn't what an edit would change. */
@@ -36,7 +38,7 @@ interface Props {
   onRemove(index: number): void;
 }
 
-export default function EqGraph({ preset, selected, bypass, interactive, spectrum, onSelect, onChange, onAdd, onRemove }: Props) {
+export default function EqGraph({ preset, base, selected, bypass, interactive, spectrum, onSelect, onChange, onAdd, onRemove }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 800, h: 360 });
   useEffect(() => {
@@ -55,6 +57,7 @@ export default function EqGraph({ preset, selected, bypass, interactive, spectru
   const toZero = `L${x(F_MAX)},${y(0)}L${x(F_MIN)},${y(0)}Z`;
   // The curve leaves the preamp out so every handle sits on it; the preamp has its own fader.
   const total = useMemo(() => line((hz) => totalGainDb({ ...preset, preampDb: 0 }, hz)), [preset.bands, size]);
+  const baseLine = useMemo(() => (base?.bands.length ? line((hz) => totalGainDb({ ...base, preampDb: 0 }, hz)) : null), [base, size]);
   const fills = useMemo(() => preset.bands.map((b) => line((hz) => bandGainDb(b, hz)) + toZero), [preset.bands, size]);
 
   const local = (e: { clientX: number; clientY: number }) => {
@@ -182,6 +185,7 @@ export default function EqGraph({ preset, selected, bypass, interactive, spectru
         {fills.map((d, i) => (
           <path key={i} className="band-fill" d={d} fill={bandColor(i)} opacity={selected === i ? 0.34 : 0.13} />
         ))}
+        {baseLine && <path className="curve-base" d={baseLine} />}
         <path className="curve-body" d={total + toZero} />
         <path className="curve" d={total} />
         {preset.bands.map((b, i) => (

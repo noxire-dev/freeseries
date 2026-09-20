@@ -555,6 +555,14 @@ a,
   font-variant-numeric: tabular-nums;
 }
 
+.curve-base {
+  fill: none;
+  stroke: rgb(255 255 255 / 0.34);
+  stroke-width: 1.25;
+  stroke-dasharray: 3 4;
+  pointer-events: none;
+}
+
 .curve-body {
   fill: rgb(255 255 255 / 0.05);
   pointer-events: none;
@@ -1082,6 +1090,15 @@ a,
 .row-selectable {
   user-select: text;
   cursor: text;
+}
+
+.actions-tight {
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.actions-tight .hint {
+  margin: 0;
 }
 
 .hint-below {

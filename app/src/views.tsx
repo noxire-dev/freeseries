@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { About, AutoEqApi, AutoEqEntry, Band, Device, InfoApi, Kind, LogEntry, Preset, SetupApi, StartupApi, Status } from "./api";
 import EqGraph, { bandColor } from "./EqGraph";
-import { DB_RANGE, F_MAX, F_MIN, clamp, formatDb, frequencies, totalGainDb } from "./eqmath";
+import { DB_RANGE, F_MAX, F_MIN, clamp, combine, formatDb, formatPreset, frequencies, totalGainDb } from "./eqmath";
 import { BUILTIN } from "./builtin";
 import type { NamedPreset, SavedOutput } from "./store";
 
@@ -110,6 +110,8 @@ function emptiestFrequency(bands: Band[]): number {
 
 export function Equalizer(p: {
   preset: Preset;
+  /** The headphone correction under this sound preset, drawn for reference. Not editable here. */
+  correction: Preset | undefined;
   bypass: boolean;
   morphKey: string;
   spectrum(): Promise<number[] | null>;
@@ -138,13 +140,18 @@ export function Equalizer(p: {
     setSelected(null);
   };
   // Boosts eat headroom. AutoEq presets ship a negative preamp for exactly this reason.
-  const peak = useMemo(() => Math.max(...PEAK_FREQS.map((hz) => totalGainDb(preset, hz))), [preset]);
+  // Headroom is about everything that plays: the correction and the sound on top of it.
+  const peak = useMemo(() => {
+    const all = combine(p.correction, preset);
+    return Math.max(...PEAK_FREQS.map((hz) => totalGainDb(all, hz)));
+  }, [preset, p.correction]);
 
   return (
     <div className="eq">
       <div className="eq-stage">
         <EqGraph
           preset={morphing ? shown : preset}
+          base={p.correction}
           selected={selected}
           bypass={p.bypass}
           interactive={!morphing}
@@ -251,8 +258,12 @@ export function Presets(p: {
   current: string;
   /** The output a chosen preset will be applied to. Undefined when the user hasn't added any yet. */
   target: string | undefined;
+  sound: Preset | undefined;
+  correction: NamedPreset | null;
   onLoad(named: NamedPreset): void;
+  onCorrection(correction: NamedPreset | null): void;
   onLoadAutoEq(entry: AutoEqEntry): Promise<void>;
+  onImport(name: string, text: string): Promise<void>;
   onSave(name: string): void;
   onDelete(name: string): void;
 }) {
@@ -261,6 +272,7 @@ export function Presets(p: {
   const [index, setIndex] = useState<AutoEqEntry[]>();
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState<string>();
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (query.trim().length < 2 || index) return;
@@ -273,38 +285,40 @@ export function Presets(p: {
     [index, query],
   );
 
+  const soundRow = (named: NamedPreset, removable: boolean) => (
+    <li key={named.name} className="row">
+      <span className="row-title">{named.name}</span>
+      <span className="row-detail">
+        {named.preset.bands.length} {named.preset.bands.length === 1 ? "band" : "bands"}
+      </span>
+      {p.current === named.name ? <span className="row-detail">In use</span> : <button className="link" onClick={() => p.onLoad(named)}>Use</button>}
+      {removable && (
+        <button className="icon-button is-danger" onClick={() => p.onDelete(named.name)} aria-label={`Delete ${named.name}`} title="Delete">
+          <svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" /></svg>
+        </button>
+      )}
+    </li>
+  );
+
+  if (!p.target) {
+    return (
+      <div className="page">
+        <p className="hint">Add an output in Devices first, then pick its presets here.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="page">
       <p className="hint">
-        {p.target
-          ? `A preset you pick here is applied to ${p.target} straight away, so you can try one after another while something plays.`
-          : "Add an output in Devices first, then pick its preset here."}
+        Two layers for {p.target}: a correction that makes the headphones themselves sound right, and a sound preset on top that you switch as
+        often as you like. Both apply the moment you pick them.
       </p>
-      <h2>Included</h2>
-      <ul className="group">
-        {BUILTIN.map((named) => (
-          <li key={named.name} className="row">
-            <span className="row-title">{named.name}</span>
-            <span className="row-detail">{named.preset.bands.length} bands</span>
-            {p.current === named.name ? <span className="row-detail">In use</span> : <button className="link" onClick={() => p.onLoad(named)}>Use</button>}
-          </li>
-        ))}
-      </ul>
 
-      <h2>Your presets</h2>
-      <ul className="group">
-        {p.library.map((named) => (
-          <li key={named.name} className="row">
-            <span className="row-title">{named.name}</span>
-            <span className="row-detail">
-              {named.preset.bands.length} {named.preset.bands.length === 1 ? "band" : "bands"}
-            </span>
-            {p.current === named.name ? <span className="row-detail">In use</span> : <button className="link" onClick={() => p.onLoad(named)}>Use</button>}
-            <button className="icon-button is-danger" onClick={() => p.onDelete(named.name)} aria-label={`Delete ${named.name}`} title="Delete">
-              <svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" /></svg>
-            </button>
-          </li>
-        ))}
+      <h2>Sound</h2>
+      <ul className="group">{BUILTIN.map((named) => soundRow(named, false))}</ul>
+      <ul className="group group-below">
+        {p.library.map((named) => soundRow(named, true))}
         <li className="row">
           <form
             className="row-form"
@@ -314,25 +328,59 @@ export function Presets(p: {
               setName("");
             }}
           >
-            <input className="text" placeholder="Name the current EQ to save it" value={name} onChange={(e) => setName(e.target.value)} aria-label="Preset name" />
+            <input className="text" placeholder="Name the current sound to save it" value={name} onChange={(e) => setName(e.target.value)} aria-label="Preset name" />
             <button className="button" disabled={!name.trim()}>
               Save preset
             </button>
           </form>
         </li>
       </ul>
+      <div className="actions actions-tight">
+        <label className="button">
+          Import from file
+          <input
+            type="file"
+            accept=".txt,text/plain"
+            className="visually-hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = ""; // so picking the same file again still fires
+              if (!file) return;
+              setError(undefined);
+              file.text().then((text) => p.onImport(file.name.replace(/(\s*ParametricEQ)?\.txt$/i, ""), text)).catch((err) => setError(String(err.message ?? err)));
+            }}
+          />
+        </label>
+        <button
+          className="button"
+          disabled={!p.sound}
+          onClick={() => navigator.clipboard.writeText(formatPreset(p.sound!)).then(() => (setCopied(true), setTimeout(() => setCopied(false), 2000)), (err) => setError(String(err.message ?? err)))}
+        >
+          {copied ? "Copied" : "Copy current sound as text"}
+        </button>
+        <span className="hint">Equalizer APO format, the one Peace and AutoEq use.</span>
+      </div>
 
-      <h2>Find your headphones</h2>
-      <p className="hint">
+      <h2>Headphone correction</h2>
+      <ul className="group">
+        <li className="row">
+          <span className="row-title">{p.correction ? p.correction.name : "None"}</span>
+          {p.correction && (
+            <>
+              <span className="row-detail">{p.correction.preset.bands.length} bands</span>
+              <button className="link" onClick={() => p.onCorrection(null)}>
+                Remove
+              </button>
+            </>
+          )}
+        </li>
+      </ul>
+      <p className="hint hint-below">
         Measured corrections from the AutoEq project, downloaded when you pick one. They assume your headset's own EQ is flat, so switch that off
         first or the two will stack.
       </p>
       <input className="text text-search" type="search" placeholder="Search by model, e.g. Arctis Nova Pro" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search headphones" />
-      {error && (
-        <p className="notice">
-          Couldn't reach the AutoEq database ({error}). Check your connection and type again to retry.
-        </p>
-      )}
+      {error && <p className="notice">{error}</p>}
       {query.trim().length >= 2 && !index && !error && <p className="hint">Loading the headphone list…</p>}
       {index && query.trim().length >= 2 && results.length === 0 && <p className="hint">No model matches “{query}”. Try fewer words.</p>}
       {results.length > 0 && (
@@ -341,19 +389,22 @@ export function Presets(p: {
             <li key={entry.path} className="row">
               <span className="row-title">{entry.name}</span>
               <span className="row-detail">{entry.source}</span>
-              {p.current === entry.name && loading !== entry.path ? (
+              {p.correction?.name === entry.name && loading !== entry.path ? (
                 <span className="row-detail">In use</span>
               ) : (
-              <button
-                className="link"
-                disabled={loading === entry.path}
-                onClick={() => {
-                  setLoading(entry.path);
-                  p.onLoadAutoEq(entry).catch((e) => setError(String(e.message ?? e))).finally(() => setLoading(undefined));
-                }}
-              >
-                {loading === entry.path ? "Loading…" : "Use"}
-              </button>
+                <button
+                  className="link"
+                  disabled={loading === entry.path}
+                  onClick={() => {
+                    setLoading(entry.path);
+                    setError(undefined);
+                    p.onLoadAutoEq(entry)
+                      .catch((e) => setError(`Couldn't download that correction (${e.message ?? e}). Check your connection and try again.`))
+                      .finally(() => setLoading(undefined));
+                  }}
+                >
+                  {loading === entry.path ? "Loading…" : "Use"}
+                </button>
               )}
             </li>
           ))}
