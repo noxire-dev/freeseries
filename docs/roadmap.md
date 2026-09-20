@@ -39,6 +39,16 @@ The expensive one. fxvad gives us exactly one virtual endpoint and we can't ship
 
 Research spike first, with `examples/probe.rs`-style measurements, before any design.
 
+## Latency (measured 2026-09-20 with `examples/latency.rs`)
+
+The tool plays quiet noise into the virtual device, records the loopback of that device and of the output, and cross-correlates them on WASAPI's own capture timestamps. Self-against-self reads 0.0 ms.
+
+- 0.1.1 as installed, FxSound -> Arctis: **64 ms**. Most of that was backlog: audio that queued up while the streams started (capture runs first) and was never given back. It varied from start to start.
+- With the queue trimming in `src/wasapi.rs` (drop whatever is always left over, keep an 8 ms cushion), FxSound -> monitor: **25-27 ms**, the same on every start. Not yet measured on the Arctis route.
+- Asking cpal for one-period buffers changed nothing. ~25 ms is the floor of shared-mode WASAPI at its 10 ms period: one period to capture, one to render, plus the cushion.
+
+**Next step for latency:** our own WASAPI backend on `IAudioClient3`, which lets shared-mode streams run at the driver's minimum period (often ~3 ms) instead of 10 ms. `AudioBackend` is already the seam for it. Target: ~10 ms. Whether fxvad and the user's outputs support small periods is unverified.
+
 ## Observed, not yet acted on
 
 - **Glitches under heavy CPU load.** The installed app logged three capture glitches at 12:59 on 2026-09-20 while a Rust build was saturating the CPU, and none in the quiet 75 minutes before. The capture and playback callbacks share a mutex'd queue and run at whatever priority cpal gives them. If this shows up while gaming, the fix is the lock-free ring buffer already flagged in `src/wasapi.rs`, plus checking the audio threads register with MMCSS ("Pro Audio").

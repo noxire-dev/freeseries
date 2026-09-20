@@ -9,6 +9,10 @@ use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+/// Audio kept in hand against scheduling jitter between the capture and playback callbacks.
+/// Lower is less delay; too low and playback runs dry (a click) when the PC is busy.
+const CUSHION_MS: usize = 8;
+
 pub struct Wasapi;
 
 impl Wasapi {
@@ -59,11 +63,12 @@ fn open(route: &Route, dsp: Arc<Dsp>, on_lost: Arc<dyn Fn() + Send + Sync>) -> R
     let name = |d: &cpal::Device| d.description().map(|d| d.name().to_string()).unwrap_or_default();
     log::info!("opening {} ({in_ch} ch) -> {} ({out_ch} ch) at {rate} Hz", name(&from), name(&to));
 
-    // ponytail: mutex'd queue between two audio callbacks, and no clock-drift compensation between
-    // the two devices (overflow drops oldest, underrun plays silence). examples/soak.rs shows it
-    // clean over 30 s; swap for a lock-free ring + async resampler if long sessions glitch.
+    // ponytail: mutex'd queue between two audio callbacks, and no resampler between the two device
+    // clocks. Drift and start-up backlog are handled by `trim` below; an underrun plays silence.
+    // Swap for a lock-free ring + async resampler if this glitches under load.
     let queue = Arc::new(Mutex::new(VecDeque::<f32>::with_capacity(rate * out_ch)));
-    let max_queued = rate * out_ch / 10; // 100 ms ceiling on added latency
+    let max_queued = rate * out_ch / 10; // hard ceiling: 100 ms
+    let ms = |n: usize| rate * out_ch * n / 1000;
 
     let on_error = |side: &'static str| {
         let on_lost = on_lost.clone();
@@ -121,10 +126,35 @@ fn open(route: &Route, dsp: Arc<Dsp>, on_lost: Arc<dyn Fn() + Send + Sync>) -> R
 
     let playback = to.build_output_stream(
         out_cfg.config(),
-        move |data: &mut [f32], _: &_| {
-            let mut q = queue.lock().unwrap();
-            for s in data.iter_mut() {
-                *s = q.pop_front().unwrap_or(0.0);
+        {
+            // Everything that is still in the queue after a callback has taken what it needs is
+            // pure delay. It builds up while the streams start (capture runs first) and whenever
+            // the output clock runs slow. Over each second, the smallest leftover seen is delay
+            // nobody needed: keep a cushion against scheduling jitter and drop the rest, once.
+            let (cushion, slack, window) = (ms(CUSHION_MS), ms(2), ms(1000));
+            let (mut least_left, mut played, mut dry) = (usize::MAX, 0usize, 0u32);
+            let mut starting = true; // the first second always runs dry once: playback starts before data arrives
+            move |data: &mut [f32], _: &_| {
+                let mut q = queue.lock().unwrap();
+                least_left = least_left.min(q.len().saturating_sub(data.len()));
+                if q.len() < data.len() {
+                    dry += 1;
+                }
+                played += data.len();
+                if played >= window {
+                    if least_left > cushion + slack {
+                        let excess = (least_left - cushion) / out_ch * out_ch; // whole frames
+                        q.drain(..excess);
+                        log::info!("dropped {} ms of built-up delay", excess * 1000 / (rate * out_ch));
+                    }
+                    if dry > 0 && !starting {
+                        log::warn!("playback ran dry {dry} times in the last second");
+                    }
+                    (least_left, played, dry, starting) = (usize::MAX, 0, 0, false);
+                }
+                for s in data.iter_mut() {
+                    *s = q.pop_front().unwrap_or(0.0);
+                }
             }
         },
         on_error("playback"),
