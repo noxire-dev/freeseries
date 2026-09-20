@@ -13,8 +13,13 @@
     "windows": [
       {
         "title": "freeseries",
-        "width": 1000,
-        "height": 680
+        "width": 1040,
+        "height": 700,
+        "minWidth": 860,
+        "minHeight": 600,
+        "decorations": false,
+        "theme": "Dark",
+        "backgroundColor": "#1E1E1E"
       }
     ],
     "security": {

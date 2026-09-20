@@ -1,0 +1,277 @@
+import { useEffect, useMemo, useState } from "react";
+import type { AutoEqApi, AutoEqEntry, Band, Device, Kind, Preset, Route, Status } from "./api";
+import EqGraph, { bandColor } from "./EqGraph";
+import { DB_RANGE, F_MAX, F_MIN, clamp, formatDb, frequencies, totalGainDb } from "./eqmath";
+import type { NamedPreset } from "./store";
+
+const KINDS: { kind: Kind; label: string }[] = [
+  { kind: "lowShelf", label: "Low shelf" },
+  { kind: "peak", label: "Peak" },
+  { kind: "highShelf", label: "High shelf" },
+];
+const PEAK_FREQS = frequencies(120);
+
+function NumberField(p: { label: string; unit: string; value: number; min: number; max: number; step: number; onChange(v: number): void }) {
+  return (
+    <label className="field">
+      <span className="field-label">{p.label}</span>
+      <span className="field-input">
+        <input
+          type="number"
+          value={p.value}
+          min={p.min}
+          max={p.max}
+          step={p.step}
+          onChange={(e) => Number.isFinite(e.target.valueAsNumber) && p.onChange(clamp(e.target.valueAsNumber, p.min, p.max))}
+        />
+        <span className="field-unit">{p.unit}</span>
+      </span>
+    </label>
+  );
+}
+
+export function Equalizer(p: { preset: Preset; bypass: boolean; onPreset(preset: Preset): void }) {
+  const { preset, onPreset } = p;
+  const [selected, setSelected] = useState<number | null>(null);
+  const band = selected !== null ? preset.bands[selected] : undefined;
+  const setBand = (i: number, b: Band) => onPreset({ ...preset, bands: preset.bands.map((old, j) => (j === i ? b : old)) });
+  const remove = (i: number) => {
+    onPreset({ ...preset, bands: preset.bands.filter((_, j) => j !== i) });
+    setSelected(null);
+  };
+  // Boosts eat headroom. AutoEq presets ship a negative preamp for exactly this reason.
+  const peak = useMemo(() => Math.max(...PEAK_FREQS.map((hz) => totalGainDb(preset, hz))), [preset]);
+
+  return (
+    <div className="eq">
+      <div className="eq-stage">
+        <EqGraph
+          preset={preset}
+          selected={selected}
+          bypass={p.bypass}
+          onSelect={setSelected}
+          onChange={setBand}
+          onRemove={remove}
+          onAdd={(b) => {
+            onPreset({ ...preset, bands: [...preset.bands, b] });
+            setSelected(preset.bands.length);
+          }}
+        />
+        <label className="preamp">
+          <span className="field-label">Preamp</span>
+          <input
+            type="range"
+            min={-DB_RANGE}
+            max={DB_RANGE}
+            step={0.1}
+            value={preset.preampDb}
+            onChange={(e) => onPreset({ ...preset, preampDb: e.target.valueAsNumber })}
+            onDoubleClick={() => onPreset({ ...preset, preampDb: 0 })}
+          />
+          <output>{formatDb(preset.preampDb)}</output>
+        </label>
+      </div>
+
+      {/* Always takes its row, so the graph doesn't resize under the pointer mid-drag. */}
+      <div className="eq-notice">
+      {peak > 0.05 && (
+        <p className="notice">
+          Loudest point is {formatDb(peak)} above full scale, so loud passages can clip.
+          <button className="link" onClick={() => onPreset({ ...preset, preampDb: Math.round((preset.preampDb - peak) * 10) / 10 })}>
+            Lower preamp to {formatDb(preset.preampDb - peak)}
+          </button>
+        </p>
+      )}
+      </div>
+
+      <div className="inspector">
+        <div className="chips" role="tablist" aria-label="Bands">
+          {preset.bands.map((_, i) => (
+            <button key={i} role="tab" aria-selected={selected === i} className="chip" style={{ color: bandColor(i) }} onClick={() => setSelected(i)}>
+              <span>{i + 1}</span>
+            </button>
+          ))}
+        </div>
+        {band && selected !== null ? (
+          <div className="band">
+            <div className="segmented" role="radiogroup" aria-label="Band type">
+              {KINDS.map((k) => (
+                <button key={k.kind} role="radio" aria-checked={band.kind === k.kind} onClick={() => setBand(selected, { ...band, kind: k.kind })}>
+                  {k.label}
+                </button>
+              ))}
+            </div>
+            <NumberField label="Frequency" unit="Hz" value={band.fc} min={F_MIN} max={F_MAX} step={1} onChange={(fc) => setBand(selected, { ...band, fc })} />
+            <NumberField label="Gain" unit="dB" value={band.gainDb} min={-DB_RANGE} max={DB_RANGE} step={0.1} onChange={(gainDb) => setBand(selected, { ...band, gainDb })} />
+            <NumberField label="Q" unit="" value={band.q} min={0.1} max={10} step={0.01} onChange={(q) => setBand(selected, { ...band, q })} />
+            <button className="button button-quiet" onClick={() => remove(selected)}>
+              Remove band
+            </button>
+          </div>
+        ) : (
+          <p className="hint">
+            {preset.bands.length
+              ? "Select a band to edit it. Drag to move, scroll over it to change its width, double-click it to remove."
+              : "Double-click the graph to add your first band, or load a preset for your headphones."}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function Presets(p: {
+  autoEq: AutoEqApi;
+  library: NamedPreset[];
+  current: string;
+  onLoad(named: NamedPreset): void;
+  onLoadAutoEq(entry: AutoEqEntry): Promise<void>;
+  onSave(name: string): void;
+  onDelete(name: string): void;
+}) {
+  const [name, setName] = useState("");
+  const [query, setQuery] = useState("");
+  const [index, setIndex] = useState<AutoEqEntry[]>();
+  const [error, setError] = useState<string>();
+  const [loading, setLoading] = useState<string>();
+
+  useEffect(() => {
+    if (query.trim().length < 2 || index) return;
+    p.autoEq.index().then(setIndex, (e) => setError(String(e.message ?? e)));
+  }, [query, index, p.autoEq]);
+
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const results = useMemo(
+    () => (index && query.trim().length >= 2 ? index.filter((e) => words.every((w) => e.name.toLowerCase().includes(w))).slice(0, 40) : []),
+    [index, query],
+  );
+
+  return (
+    <div className="page">
+      <h2>Your presets</h2>
+      <ul className="group">
+        {p.library.map((named) => (
+          <li key={named.name} className="row">
+            <span className="row-title">{named.name}</span>
+            <span className="row-detail">
+              {named.preset.bands.length} {named.preset.bands.length === 1 ? "band" : "bands"}
+            </span>
+            {p.current === named.name ? <span className="row-detail">In use</span> : <button className="link" onClick={() => p.onLoad(named)}>Use</button>}
+            <button className="link link-danger" onClick={() => p.onDelete(named.name)}>
+              Delete
+            </button>
+          </li>
+        ))}
+        <li className="row">
+          <form
+            className="row-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (name.trim()) p.onSave(name.trim());
+              setName("");
+            }}
+          >
+            <input className="text" placeholder="Name the current EQ to save it" value={name} onChange={(e) => setName(e.target.value)} aria-label="Preset name" />
+            <button className="button" disabled={!name.trim()}>
+              Save preset
+            </button>
+          </form>
+        </li>
+      </ul>
+
+      <h2>Find your headphones</h2>
+      <p className="hint">
+        Measured corrections from the AutoEq project, downloaded when you pick one. They assume your headset's own EQ is flat, so switch that off
+        first or the two will stack.
+      </p>
+      <input className="text text-search" type="search" placeholder="Search by model, e.g. Arctis Nova Pro" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search headphones" />
+      {error && (
+        <p className="notice">
+          Couldn't reach the AutoEq database ({error}). Check your connection and type again to retry.
+        </p>
+      )}
+      {query.trim().length >= 2 && !index && !error && <p className="hint">Loading the headphone list…</p>}
+      {index && query.trim().length >= 2 && results.length === 0 && <p className="hint">No model matches “{query}”. Try fewer words.</p>}
+      {results.length > 0 && (
+        <ul className="group">
+          {results.map((entry) => (
+            <li key={entry.path} className="row">
+              <span className="row-title">{entry.name}</span>
+              <span className="row-detail">{entry.source}</span>
+              <button
+                className="link"
+                disabled={loading === entry.path}
+                onClick={() => {
+                  setLoading(entry.path);
+                  p.onLoadAutoEq(entry).catch((e) => setError(String(e.message ?? e))).finally(() => setLoading(undefined));
+                }}
+              >
+                {loading === entry.path ? "Loading…" : "Use"}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+export function Devices(p: { devices: Device[]; route: Route | null; status: Status; onRoute(route: Route | null): void; onRefresh(): void }) {
+  const [from, setFrom] = useState(p.route?.from ?? "");
+  const [to, setTo] = useState(p.route?.to ?? "");
+  useEffect(() => {
+    setFrom(p.route?.from ?? from);
+    setTo(p.route?.to ?? to);
+  }, [p.route]);
+  const running = p.route !== null;
+  const ready = from && to && from !== to;
+
+  // While audio runs, picking a device re-routes straight away.
+  const choose = (next: Route) => {
+    setFrom(next.from);
+    setTo(next.to);
+    if (running) p.onRoute(next);
+  };
+
+  const picker = (label: string, help: string, value: string, set: (id: string) => void, other: string) => (
+    <>
+      <h2>{label}</h2>
+      <p className="hint">{help}</p>
+      <ul className="group" role="radiogroup" aria-label={label}>
+        {p.devices.map((d) => (
+          <li key={d.id}>
+            <label className={`row row-choice${d.id === other ? " is-disabled" : ""}`}>
+              <input type="radio" name={label} checked={value === d.id} disabled={d.id === other} onChange={() => set(d.id)} />
+              <span className="row-title">{d.name}</span>
+              <span className="row-detail">
+                {d.channels} ch, {d.sampleRate / 1000} kHz
+              </span>
+            </label>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+
+  return (
+    <div className="page">
+      {picker("Apps play into", "The virtual device. Make it your default output in Windows and turn spatial sound on for it.", from, (id) => choose({ from: id, to }), to)}
+      {picker("You listen on", "Your real headphones. Leave spatial sound off here so it isn't applied twice.", to, (id) => choose({ from, to: id }), from)}
+      <div className="actions">
+        {running ? (
+          <button className="button" onClick={() => p.onRoute(null)}>
+            Stop
+          </button>
+        ) : (
+          <button className="button button-primary" disabled={!ready} onClick={() => p.onRoute({ from, to })}>
+            Start
+          </button>
+        )}
+        <button className="button button-quiet" onClick={p.onRefresh}>
+          Refresh devices
+        </button>
+        {p.status.state === "reconnecting" && <span className="hint">Reconnecting: {p.status.error}</span>}
+      </div>
+    </div>
+  );
+}

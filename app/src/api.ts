@@ -1,0 +1,112 @@
+// Everything the UI needs from outside the webview goes through these interfaces. The Tauri
+// implementations are built in main.tsx; a browser preview (plain `npm run dev`) gets the mocks.
+
+export type Kind = "peak" | "lowShelf" | "highShelf";
+export interface Band { kind: Kind; fc: number; gainDb: number; q: number }
+export interface Preset { preampDb: number; bands: Band[] }
+export interface Device { id: string; name: string; channels: number; sampleRate: number }
+export interface Route { from: string; to: string }
+export type Status = { state: "stopped" } | { state: "running" } | { state: "reconnecting"; error: string };
+export interface Snapshot { status: Status; route: Route | null; preset: Preset; bypass: boolean }
+
+export interface EngineApi {
+  listOutputs(): Promise<Device[]>;
+  snapshot(): Promise<Snapshot>;
+  setRoute(route: Route | null): Promise<void>;
+  setPreset(preset: Preset): Promise<void>;
+  setBypass(bypass: boolean): Promise<void>;
+  parsePreset(text: string): Promise<Preset>;
+}
+
+export interface WindowApi {
+  minimize(): void;
+  toggleMaximize(): void;
+  close(): void;
+}
+
+export interface AutoEqEntry { name: string; source: string; path: string }
+
+/** The AutoEq headphone database on GitHub. Fetched on demand, nothing is bundled. */
+export interface AutoEqApi {
+  index(): Promise<AutoEqEntry[]>;
+  fetchPreset(entry: AutoEqEntry): Promise<string>;
+}
+
+const AUTOEQ = "https://raw.githubusercontent.com/jaakkopasanen/AutoEq/master/results";
+
+export function githubAutoEq(): AutoEqApi {
+  let cached: Promise<AutoEqEntry[]> | undefined;
+  return {
+    index: () =>
+      (cached ??= fetch(`${AUTOEQ}/INDEX.md`)
+        .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`AutoEq index: HTTP ${r.status}`))))
+        .then(parseAutoEqIndex)
+        .catch((e) => {
+          cached = undefined; // let the next search retry
+          throw e;
+        })),
+    fetchPreset: async (entry) => {
+      const file = `${entry.path}/${encodeURIComponent(entry.name)}%20ParametricEQ.txt`;
+      const r = await fetch(`${AUTOEQ}/${file}`);
+      if (!r.ok) throw new Error(`AutoEq preset: HTTP ${r.status}`);
+      return r.text();
+    },
+  };
+}
+
+/** Lines look like `- [Name](./oratory1990/over-ear/Name) by oratory1990 on GRAS 43AG-7`. */
+export function parseAutoEqIndex(markdown: string): AutoEqEntry[] {
+  const entries: AutoEqEntry[] = [];
+  for (const m of markdown.matchAll(/^- \[(.+?)\]\(\.\/(.+?)\)\s+by\s+(.+)$/gm)) {
+    entries.push({ name: m[1], path: m[2], source: m[3].trim() });
+  }
+  return entries;
+}
+
+export async function tauriEngine(): Promise<EngineApi> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return {
+    listOutputs: () => invoke("list_outputs"),
+    snapshot: () => invoke("snapshot"),
+    setRoute: (route) => invoke("set_route", { route }),
+    setPreset: (preset) => invoke("set_preset", { preset }),
+    setBypass: (bypass) => invoke("set_bypass", { bypass }),
+    parsePreset: (text) => invoke("parse_preset", { text }),
+  };
+}
+
+export async function tauriWindow(): Promise<WindowApi> {
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  const w = getCurrentWindow();
+  return { minimize: () => void w.minimize(), toggleMaximize: () => void w.toggleMaximize(), close: () => void w.close() };
+}
+
+/** Browser preview: a fake engine with the devices of a typical setup. */
+export function mockEngine(): EngineApi {
+  let state: Snapshot = { status: { state: "stopped" }, route: null, preset: { preampDb: 0, bands: [] }, bypass: false };
+  const kinds: Record<string, Kind> = { PK: "peak", LSC: "lowShelf", LS: "lowShelf", HSC: "highShelf", HS: "highShelf" };
+  return {
+    listOutputs: async () => [
+      { id: "wasapi:fx", name: "Speakers (FxSound Audio Enhancer)", channels: 2, sampleRate: 48000 },
+      { id: "wasapi:hdmi", name: "Odyssey G65B (NVIDIA High Definition Audio)", channels: 2, sampleRate: 48000 },
+      { id: "wasapi:rtk", name: "Speakers (Realtek(R) Audio)", channels: 2, sampleRate: 48000 },
+      { id: "wasapi:arctis", name: "Headphones (Arctis Nova Pro Wireless)", channels: 2, sampleRate: 48000 },
+    ],
+    snapshot: async () => state,
+    setRoute: async (route) => void (state = { ...state, route, status: { state: route ? "running" : "stopped" } }),
+    setPreset: async (preset) => void (state = { ...state, preset }),
+    setBypass: async (bypass) => void (state = { ...state, bypass }),
+    parsePreset: async (text) => {
+      const preset: Preset = { preampDb: 0, bands: [] };
+      for (const line of text.split("\n")) {
+        const pre = line.match(/^Preamp:\s*(-?[\d.]+)/i);
+        if (pre) preset.preampDb = Number(pre[1]);
+        const f = line.match(/^Filter.*?ON\s+(\w+)\s+Fc\s+([\d.]+)\s+Hz\s+Gain\s+(-?[\d.]+)\s+dB(?:\s+Q\s+([\d.]+))?/i);
+        if (f && kinds[f[1]]) preset.bands.push({ kind: kinds[f[1]], fc: Number(f[2]), gainDb: Number(f[3]), q: Number(f[4] ?? 0.707) });
+      }
+      return preset;
+    },
+  };
+}
+
+export const mockWindow = (): WindowApi => ({ minimize() {}, toggleMaximize() {}, close() {} });
