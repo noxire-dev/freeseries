@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AutoEqApi, Device, EngineApi, LogApi, LogEntry, Preset, SetupApi, StartupApi, Status, WindowApi } from "./api";
 import { findVirtualDevice, shortName } from "./devices";
 import type { SavedOutput, SettingsStore } from "./store";
@@ -79,6 +79,10 @@ export default function App(p: {
   useEffect(() => {
     engine.setPlan(shape && virtual ? { from: virtual, outputs: latest.current.map(({ id, preset }) => ({ id, preset })) } : null);
   }, [engine, shape]);
+
+  // Stable identities: the graph restarts its analyser loop when these change.
+  const spectrum = useCallback(() => engine.spectrum(96), [engine]);
+  const setAnalysing = useCallback((on: boolean) => void engine.setAnalysing(on), [engine]);
 
   // What the editor shows: the output that is playing, or the preferred one while stopped.
   const activeId = status.state === "running" ? status.output : undefined;
@@ -185,6 +189,8 @@ export default function App(p: {
               bypass={bypass}
               morphKey={`${editing.id}|${editing.presetName.replace(/ \(edited\)$/, "")}`}
               onPreset={applyPreset}
+              spectrum={spectrum}
+              onAnalysing={setAnalysing}
               onBrowsePresets={() => setView("presets")}
             />
           ) : (

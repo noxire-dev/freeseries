@@ -109,6 +109,7 @@ fn open(route: &Route, dsp: Arc<Dsp>, on_lost: Arc<dyn Fn() + Send + Sync>) -> R
             if !dsp.bypassed() {
                 eq.process(&mut scratch);
             }
+            dsp.tap(&scratch, out_ch, rate as f32);
             let mut q = producer.lock().unwrap();
             q.extend(scratch.iter());
             let excess = q.len().saturating_sub(max_queued);

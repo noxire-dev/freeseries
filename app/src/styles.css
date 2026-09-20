@@ -521,10 +521,19 @@ a,
   pointer-events: auto;
 }
 
-.graph svg {
+.graph svg,
+.analyser {
   position: absolute;
   inset: 0;
   display: block;
+}
+
+.analyser {
+  pointer-events: none;
+}
+
+.graph.is-bypassed .analyser {
+  opacity: 0.6;
 }
 
 .grid {

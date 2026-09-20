@@ -56,6 +56,18 @@ fn set_bypass(app: State<App>, bypass: bool) {
     app.engine.dsp.set_bypass(bypass);
 }
 
+/// Turns the analyser tap on while the equalizer is on screen.
+#[tauri::command]
+fn set_analysing(app: State<App>, on: bool) {
+    app.engine.dsp.set_analysing(on);
+}
+
+/// dBFS per log-spaced band (20 Hz to 20 kHz) of what is playing right now.
+#[tauri::command]
+fn spectrum(app: State<App>, bands: usize) -> Option<Vec<f32>> {
+    app.engine.dsp.spectrum(bands.clamp(8, 256))
+}
+
 /// Parses AutoEq / Equalizer APO `ParametricEQ.txt` text into a preset for the editor.
 #[tauri::command]
 fn parse_preset(text: String) -> Preset {
@@ -181,6 +193,8 @@ pub fn run() {
             set_plan,
             set_preset,
             set_bypass,
+            set_analysing,
+            spectrum,
             parse_preset,
             open_log_folder,
             starts_with_windows,

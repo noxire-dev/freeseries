@@ -108,8 +108,21 @@ function emptiestFrequency(bands: Band[]): number {
   return bands.length ? best.fc : 1000;
 }
 
-export function Equalizer(p: { preset: Preset; bypass: boolean; morphKey: string; onPreset(preset: Preset): void; onBrowsePresets(): void }) {
+export function Equalizer(p: {
+  preset: Preset;
+  bypass: boolean;
+  morphKey: string;
+  spectrum(): Promise<number[] | null>;
+  onAnalysing(on: boolean): void;
+  onPreset(preset: Preset): void;
+  onBrowsePresets(): void;
+}) {
   const { preset, onPreset } = p;
+  // The engine only taps the audio for the analyser while this page is up.
+  useEffect(() => {
+    p.onAnalysing(true);
+    return () => p.onAnalysing(false);
+  }, [p.onAnalysing]);
   const [selected, setSelected] = useState<number | null>(null);
   const { shown, morphing } = useMorph(preset, p.morphKey);
   useEffect(() => setSelected(null), [p.morphKey]);
@@ -135,6 +148,7 @@ export function Equalizer(p: { preset: Preset; bypass: boolean; morphKey: string
           selected={selected}
           bypass={p.bypass}
           interactive={!morphing}
+          spectrum={p.spectrum}
           onSelect={setSelected}
           onChange={setBand}
           onRemove={remove}

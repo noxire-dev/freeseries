@@ -18,6 +18,10 @@ export interface EngineApi {
   /** Live EQ edit for the output that is playing. */
   setPreset(preset: Preset): Promise<void>;
   setBypass(bypass: boolean): Promise<void>;
+  /** Turns the analyser tap on or off. It only costs anything while it's on. */
+  setAnalysing(on: boolean): Promise<void>;
+  /** dBFS per log-spaced band from 20 Hz to 20 kHz of what is playing, or null while the analyser is off. */
+  spectrum(bands: number): Promise<number[] | null>;
   parsePreset(text: string): Promise<Preset>;
 }
 
@@ -99,6 +103,8 @@ export async function tauriEngine(): Promise<EngineApi> {
     setPlan: (plan) => invoke("set_plan", { plan }),
     setPreset: (preset) => invoke("set_preset", { preset }),
     setBypass: (bypass) => invoke("set_bypass", { bypass }),
+    setAnalysing: (on) => invoke("set_analysing", { on }),
+    spectrum: (bands) => invoke("spectrum", { bands }),
     parsePreset: (text) => invoke("parse_preset", { text }),
   };
 }
@@ -169,6 +175,18 @@ export function mockEngine(): EngineApi {
     setPlan: async (plan) => void (state = { ...state, status: plan?.outputs.length ? { state: "running", output: plan.outputs[0].id } : { state: "stopped" } }),
     setPreset: async () => {},
     setBypass: async (bypass) => void (state = { ...state, bypass }),
+    setAnalysing: async () => {},
+    // Something that moves like music: a pink-ish slope, a bass pulse, a wandering presence bump.
+    spectrum: async (bands) => {
+      if (state.status.state !== "running") return null;
+      const t = performance.now() / 1000;
+      return Array.from({ length: bands }, (_, i) => {
+        const octave = (i / bands) * 10;
+        const bass = 14 * Math.exp(-((octave - 1.6) ** 2)) * (0.6 + 0.4 * Math.sin(t * 7));
+        const presence = 9 * Math.exp(-((octave - 6.5 - Math.sin(t * 0.7)) ** 2) / 1.5);
+        return -34 - octave * 3.2 + bass + presence + 4 * Math.sin(i * 1.7 + t * 9);
+      });
+    },
     parsePreset: async (text) => {
       const preset: Preset = { preampDb: 0, bands: [] };
       for (const line of text.split("\n")) {

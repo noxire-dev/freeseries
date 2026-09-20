@@ -6,6 +6,7 @@
 //! reopens the session when the OS invalidates it (spatial sound toggled, format changed).
 
 use crate::eq::Preset;
+use crate::spectrum::Tap;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
@@ -96,6 +97,8 @@ pub struct Dsp {
     preset: Mutex<Preset>,
     dirty: AtomicBool,
     bypass: AtomicBool,
+    analysing: AtomicBool,
+    tap: Mutex<Tap>,
 }
 
 impl Dsp {
@@ -114,6 +117,26 @@ impl Dsp {
 
     pub fn bypassed(&self) -> bool {
         self.bypass.load(Relaxed)
+    }
+
+    /// The analyser only costs anything while someone is looking at it.
+    pub fn set_analysing(&self, on: bool) {
+        self.analysing.store(on, Relaxed);
+    }
+
+    /// For the audio callback: hands the processed audio to the analyser. Never blocks; a block
+    /// that arrives while the UI is reading is simply skipped.
+    pub fn tap(&self, interleaved: &[f32], channels: usize, sample_rate: f32) {
+        if self.analysing.load(Relaxed) {
+            if let Ok(mut tap) = self.tap.try_lock() {
+                tap.push(interleaved, channels, sample_rate);
+            }
+        }
+    }
+
+    /// dBFS per log-spaced band of what is playing, or `None` while the analyser is off.
+    pub fn spectrum(&self, bands: usize) -> Option<Vec<f32>> {
+        self.analysing.load(Relaxed).then(|| self.tap.lock().unwrap().spectrum(bands))
     }
 
     /// For the audio callback: the preset, if it changed since the last call.

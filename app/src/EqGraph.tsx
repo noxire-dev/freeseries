@@ -14,19 +14,29 @@ const GRID_DB = [-12, -6, 0, 6, 12];
 const PAD = { left: 36, right: 14, top: 14, bottom: 24 };
 const FREQS = frequencies(240);
 
+// Analyser. Levels are tilted 4.5 dB/octave around 1 kHz, the usual analyser convention, so music
+// (which falls off towards the treble) fills the display instead of sagging to the right.
+const TILT_DB_PER_OCTAVE = 4.5;
+const ANALYSER_TOP_DB = -12;
+const ANALYSER_BOTTOM_DB = -84;
+const FRAME_MS = 33;
+const RELEASE_DB = 0.9; // per frame: bars fall at ~27 dB/s, rise at once
+
 interface Props {
   preset: Preset;
   selected: number | null;
   bypass: boolean;
   /** False while a preset change is animating: what's drawn isn't what an edit would change. */
   interactive: boolean;
+  /** dBFS per log-spaced band of what is playing; null when there is nothing to show. */
+  spectrum(): Promise<number[] | null>;
   onSelect(index: number | null): void;
   onChange(index: number, band: Band): void;
   onAdd(band: Band): void;
   onRemove(index: number): void;
 }
 
-export default function EqGraph({ preset, selected, bypass, interactive, onSelect, onChange, onAdd, onRemove }: Props) {
+export default function EqGraph({ preset, selected, bypass, interactive, spectrum, onSelect, onChange, onAdd, onRemove }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 800, h: 360 });
   useEffect(() => {
@@ -73,6 +83,71 @@ export default function EqGraph({ preset, selected, bypass, interactive, onSelec
     e.preventDefault();
   };
 
+  // The analyser paints straight onto a canvas, outside React: 30 frames a second must not
+  // re-render the editor. It runs on animation frames, so it stops by itself while the window is hidden.
+  const canvas = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const el = canvas.current!;
+    const ctx = el.getContext("2d")!;
+    const dpr = window.devicePixelRatio || 1;
+    el.width = Math.round(size.w * dpr);
+    el.height = Math.round(size.h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const bottom = PAD.top + plot.h;
+    const fill = ctx.createLinearGradient(0, PAD.top, 0, bottom);
+    fill.addColorStop(0, "rgb(100 210 255 / 0.34)");
+    fill.addColorStop(1, "rgb(100 210 255 / 0.04)");
+
+    let held: number[] = [];
+    const draw = (levels: number[] | null) => {
+      ctx.clearRect(0, 0, size.w, size.h);
+      if (!levels) return (held = []);
+      held = levels.map((db, i) => Math.max(db, (held[i] ?? ANALYSER_BOTTOM_DB) - RELEASE_DB));
+      const points = held.map((db, i) => {
+        const hz = F_MIN * (F_MAX / F_MIN) ** ((i + 0.5) / held.length);
+        const shown = clamp(db + TILT_DB_PER_OCTAVE * Math.log2(hz / 1000), ANALYSER_BOTTOM_DB, ANALYSER_TOP_DB);
+        return [x(hz), bottom - ((shown - ANALYSER_BOTTOM_DB) / (ANALYSER_TOP_DB - ANALYSER_BOTTOM_DB)) * plot.h];
+      });
+      if (points.every(([, py]) => py >= bottom - 0.5)) return; // silence
+      // The top edge once, as a curve through the midpoints rather than a row of corners.
+      const contour = new Path2D();
+      contour.moveTo(PAD.left, points[0][1]);
+      for (let i = 0; i < points.length - 1; i++) {
+        contour.quadraticCurveTo(points[i][0], points[i][1], (points[i][0] + points[i + 1][0]) / 2, (points[i][1] + points[i + 1][1]) / 2);
+      }
+      contour.lineTo(PAD.left + plot.w, points[points.length - 1][1]);
+      // Filled down to the floor, but only the contour is outlined: no box around the display.
+      const body = new Path2D(contour);
+      body.lineTo(PAD.left + plot.w, bottom);
+      body.lineTo(PAD.left, bottom);
+      body.closePath();
+      ctx.fillStyle = fill;
+      ctx.fill(body);
+      ctx.strokeStyle = "rgb(160 225 255 / 0.5)";
+      ctx.lineWidth = 1;
+      ctx.stroke(contour);
+    };
+
+    let frame = 0;
+    let last = 0;
+    let waiting = false;
+    let live = true;
+    const loop = (now: number) => {
+      frame = requestAnimationFrame(loop);
+      if (waiting || now - last < FRAME_MS) return;
+      last = now;
+      waiting = true;
+      spectrum()
+        .then((levels) => live && draw(levels), () => live && draw(null))
+        .finally(() => (waiting = false));
+    };
+    frame = requestAnimationFrame(loop);
+    return () => {
+      live = false;
+      cancelAnimationFrame(frame);
+    };
+  }, [spectrum, size]);
+
   const focused = selected !== null ? preset.bands[selected] : undefined;
 
   return (
@@ -86,6 +161,7 @@ export default function EqGraph({ preset, selected, bypass, interactive, onSelec
         onAdd(round({ kind: "peak", fc: hzAt(px), gainDb: dbAt(py), q: 1.41 }));
       }}
     >
+      <canvas ref={canvas} className="analyser" style={{ width: size.w, height: size.h }} aria-hidden="true" />
       <svg width={size.w} height={size.h} role="group" aria-label="Frequency response. Double-click to add a band.">
         {GRID_MINOR.map((hz) => (
           <line key={hz} className={DECADES.has(hz) ? "grid grid-major" : "grid"} x1={x(hz)} x2={x(hz)} y1={PAD.top} y2={PAD.top + plot.h} />

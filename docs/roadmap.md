@@ -22,6 +22,8 @@ Still open: a one-click "make it default" (needs the undocumented `IPolicyConfig
 
 ## 3. Editor and UI pass (first pass done 2026-09-20)
 
+Done since: a live spectrum analyser behind the curve (`src/spectrum.rs`: a tap on the processed audio, an own radix-2 FFT run off the audio thread, 96 log bands; drawn on a canvas outside React). Its display range (-84 to -12 dBFS after a 4.5 dB/octave tilt) was tuned against synthetic data only and wants a look with real music.
+
 The EQ editor needs love and the app reads as an open-source project. Do it as a proper design pass with the `impeccable` skill, not piecemeal.
 
 ## 4. Sonar preset import
