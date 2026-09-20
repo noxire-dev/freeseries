@@ -10,7 +10,8 @@ use std::time::Duration;
 
 const RETRY: Duration = Duration::from_millis(500);
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeviceInfo {
     pub id: String,
     pub name: String,
@@ -19,13 +20,15 @@ pub struct DeviceInfo {
 }
 
 /// Capture everything played into `from`, play the processed result on `to`. Both are device ids.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Route {
     pub from: String,
     pub to: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(tag = "state", content = "error", rename_all = "camelCase")]
 pub enum Status {
     Stopped,
     Running,

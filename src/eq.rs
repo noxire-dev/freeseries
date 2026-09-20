@@ -3,14 +3,16 @@
 
 use std::f64::consts::PI;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Kind {
     Peak,
     LowShelf,
     HighShelf,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Band {
     pub kind: Kind,
     pub fc: f64,
@@ -18,7 +20,8 @@ pub struct Band {
     pub q: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Preset {
     pub preamp_db: f64,
     pub bands: Vec<Band>,
