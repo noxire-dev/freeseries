@@ -1,6 +1,8 @@
 mod autostart;
+mod setup;
 
 use autostart::{Autostart, TaskScheduler};
+use setup::{ScriptSetup, Setup};
 use freeseries::arctis::ArctisNovaPro;
 use freeseries::engine::{AudioBackend, DeviceInfo, Engine, Plan, Status};
 use freeseries::eq::Preset;
@@ -58,6 +60,29 @@ fn set_bypass(app: State<App>, bypass: bool) {
 #[tauri::command]
 fn parse_preset(text: String) -> Preset {
     freeseries::eq::parse(&text)
+}
+
+/// The output Windows plays to by default, so setup can tell when the virtual device has taken over.
+#[tauri::command]
+fn default_output() -> Option<String> {
+    Wasapi.default_output_id()
+}
+
+/// Installs the virtual audio device. Shows a UAC prompt; blocks until setup is done.
+#[tauri::command(async)]
+fn install_device(setup: State<Box<dyn Setup>>) -> Result<Vec<String>, String> {
+    setup.install_device()
+}
+
+/// Names the virtual device's endpoint "freeseries". No prompt.
+#[tauri::command(async)]
+fn name_device(setup: State<Box<dyn Setup>>) -> Result<Vec<String>, String> {
+    setup.name_device()
+}
+
+#[tauri::command]
+fn open_sound_settings(app: tauri::AppHandle) -> Result<(), String> {
+    app.opener().open_url("ms-settings:sound", None::<&str>).map_err(|e| e.to_string())
 }
 
 /// Where the log files live, for attaching to bug reports.
@@ -159,9 +184,15 @@ pub fn run() {
             parse_preset,
             open_log_folder,
             starts_with_windows,
-            set_starts_with_windows
+            set_starts_with_windows,
+            default_output,
+            install_device,
+            name_device,
+            open_sound_settings
         ])
         .setup(|app| {
+            let resources = app.path().resource_dir()?.join("resources");
+            app.manage(Box::new(ScriptSetup { script: resources.join("setup.ps1"), package: resources.join("fxvad") }) as Box<dyn Setup>);
             tray(app)?;
             // The window is created hidden; a boot launch leaves it that way.
             if !std::env::args().any(|a| a == MINIMIZED) {

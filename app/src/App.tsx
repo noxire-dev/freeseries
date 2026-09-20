@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import type { AutoEqApi, Device, EngineApi, LogApi, LogEntry, Preset, StartupApi, Status, WindowApi } from "./api";
+import type { AutoEqApi, Device, EngineApi, LogApi, LogEntry, Preset, SetupApi, StartupApi, Status, WindowApi } from "./api";
 import { findVirtualDevice, shortName } from "./devices";
 import type { SavedOutput, SettingsStore } from "./store";
-import { Devices, Equalizer, Log, Presets, Settings } from "./views";
+import { Devices, Equalizer, Log, Presets, Settings, Setup } from "./views";
 
-type View = "equalizer" | "presets" | "devices" | "settings" | "log";
+type View = "equalizer" | "presets" | "devices" | "settings" | "log" | "setup";
 
 const NAV: { view: View; label: string; icon: string }[] = [
   { view: "equalizer", label: "Equalizer", icon: "M4 7h9m4 0h3M4 17h3m4 0h9M15 4.5v5M9 14.5v5" },
@@ -24,6 +24,7 @@ export default function App(p: {
   win: WindowApi;
   log: LogApi;
   startup: StartupApi;
+  setup: SetupApi;
   autoEq: AutoEqApi;
   settings: SettingsStore;
   /** A development build sits next to the installed app, so it must not start playing by itself. */
@@ -52,7 +53,11 @@ export default function App(p: {
 
   useEffect(() => {
     engine.setBypass(saved.bypass);
-    engine.listOutputs().then(setDevices);
+    engine.listOutputs().then((found) => {
+      setDevices(found);
+      // Nothing to play into yet: this PC hasn't been set up (unless the user picked their own virtual cable).
+      if (!findVirtualDevice(found) && !saved.source) setView("setup");
+    });
     const poll = setInterval(() => engine.snapshot().then((s) => setStatus(s.status)), 1000);
     return () => clearInterval(poll);
   }, [engine]);
@@ -135,7 +140,7 @@ export default function App(p: {
       <main className="main">
         <header className="toolbar" data-tauri-drag-region>
           <h2 className="toolbar-title" data-tauri-drag-region>
-            {view === "equalizer" ? (editing?.presetName ?? "Equalizer") : NAV.find((n) => n.view === view)!.label}
+            {view === "equalizer" ? (editing?.presetName ?? "Equalizer") : view === "setup" ? "Set up freeseries" : NAV.find((n) => n.view === view)!.label}
             {view === "equalizer" && editing && <small> for {nameOf(editing.id)}</small>}
           </h2>
           {view === "equalizer" && editing && (
@@ -214,7 +219,16 @@ export default function App(p: {
             onDelete={(name) => setLibrary(library.filter((n) => n.name !== name))}
           />
         )}
-        {view === "settings" && <Settings startup={p.startup} />}
+        {view === "settings" && <Settings startup={p.startup} onSetup={() => setView("setup")} />}
+        {view === "setup" && (
+          <Setup
+            setup={p.setup}
+            detected={findVirtualDevice(devices)}
+            hasOutputs={outputs.length > 0}
+            onRefresh={() => engine.listOutputs().then(setDevices)}
+            onDone={() => setView("devices")}
+          />
+        )}
         {view === "log" && <Log entries={entries} onOpenFolder={p.log.openFolder} />}
         {view === "devices" && (
           <Devices
@@ -234,6 +248,7 @@ export default function App(p: {
               if (next) setView("equalizer"); // just started: go tune it
             }}
             onRefresh={() => engine.listOutputs().then(setDevices)}
+            onSetup={() => setView("setup")}
           />
         )}
       </main>

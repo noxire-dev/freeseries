@@ -1,0 +1,3 @@
+# The driver package is signed as exact bytes: a line-ending conversion breaks the catalog hash
+# and Windows refuses the install (0xE000024B).
+app/src-tauri/resources/fxvad/* -text

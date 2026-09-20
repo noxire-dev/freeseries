@@ -987,6 +987,83 @@ a,
   letter-spacing: 0;
 }
 
+.steps {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.step {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 12px;
+  padding: 14px;
+  border-radius: var(--radius-group);
+  background: var(--fill-1);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.04);
+  counter-increment: step;
+}
+
+.step h3 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 2px 0 4px;
+}
+
+.step .hint {
+  margin-bottom: 10px;
+}
+
+.step .notice {
+  margin-top: 10px;
+}
+
+.step-mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--fill-2);
+  color: var(--label-2);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.step-mark:empty::before {
+  content: counter(step);
+}
+
+.step.is-done .step-mark {
+  background: var(--green);
+}
+
+.step-mark svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: #0b2e14;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.step-state {
+  color: var(--green);
+  font-weight: 500;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .hint-below {
   margin-top: 8px;
 }

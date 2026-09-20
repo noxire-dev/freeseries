@@ -12,11 +12,15 @@ One feature, three symptoms:
 
 This is also the robustness story: a missing headset must never mean silent audio.
 
-## 2. Setup wizard (still owed for v1)
+## 2. Setup wizard (built 2026-09-20, real install path untested)
 
-Driver install (elevated, `scripts/install-fxvad.ps1`), set the virtual device as default, turn spatial sound on. Since it runs elevated anyway, rename the endpoint there: "Speakers" -> "freeseries". That part is `PKEY_Device_DeviceDesc` on the endpoint and needs admin to write. The "(FxSound Audio Enhancer)" suffix comes from the signed INF; whether the cached `PKEY_DeviceInterface_FriendlyName` can be overridden without breaking anything is **unverified**.
+`app/src-tauri/resources/setup.ps1` installs the vendored, Microsoft-signed fxvad package (one UAC prompt) and names the endpoint "freeseries". The app opens the wizard by itself when no virtual device exists, watches for the device becoming the Windows default, then hands over to Devices. Verified: the script on Windows PowerShell 5.1 (dry run and rename), the elevation command line (unit test), the whole flow against the preview's simulated fresh PC. **Not verified:** the elevated install from inside the app, because the only test machine already has the driver.
 
-## 3. Editor and UI pass
+Found on the way: renaming an endpoint (`PKEY_Device_DeviceDesc`) needs **no** admin rights, so it never prompts. The "(FxSound Audio Enhancer)" suffix is the driver's interface name and stays.
+
+Still open: a one-click "make it default" (needs the undocumented `IPolicyConfig` COM interface that EarTrumpet and SoundSwitch use; today the wizard deep-links to Sound settings and detects the result), and uninstall.
+
+## 3. Editor and UI pass (first pass done 2026-09-20)
 
 The EQ editor needs love and the app reads as an open-source project. Do it as a proper design pass with the `impeccable` skill, not piecemeal.
 

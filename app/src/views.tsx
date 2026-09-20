@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { AutoEqApi, AutoEqEntry, Band, Device, Kind, LogEntry, Preset, StartupApi, Status } from "./api";
+import type { AutoEqApi, AutoEqEntry, Band, Device, Kind, LogEntry, Preset, SetupApi, StartupApi, Status } from "./api";
 import EqGraph, { bandColor } from "./EqGraph";
 import { DB_RANGE, F_MAX, F_MIN, clamp, formatDb, frequencies, totalGainDb } from "./eqmath";
 import { BUILTIN } from "./builtin";
@@ -355,6 +355,7 @@ export function Devices(p: {
   onOutputs(outputs: SavedOutput[]): void;
   onRunning(running: boolean): void;
   onRefresh(): void;
+  onSetup(): void;
 }) {
   const virtual = p.detected?.id ?? p.source;
   const chosen = new Set(p.outputs.map((o) => o.id));
@@ -383,7 +384,12 @@ export function Devices(p: {
         </>
       ) : (
         <>
-          <p className="notice">The freeseries virtual device isn't installed, so there's nothing for your apps to play into yet.</p>
+          <p className="notice">
+            The freeseries audio device isn't installed, so there's nothing for your apps to play into yet.
+            <button className="link" onClick={p.onSetup}>
+              Set it up
+            </button>
+          </p>
           <p className="hint hint-below">Already use another virtual cable? Pick it here.</p>
           <ul className="group" role="radiogroup" aria-label="Virtual device">
             {p.devices.map((d) => (
@@ -526,7 +532,7 @@ export function Log(p: { entries: (LogEntry & { time: string })[]; onOpenFolder(
   );
 }
 
-export function Settings(p: { startup: StartupApi }) {
+export function Settings(p: { startup: StartupApi; onSetup(): void }) {
   const [enabled, setEnabled] = useState(false);
   const [error, setError] = useState<string>();
   useEffect(() => {
@@ -557,11 +563,117 @@ export function Settings(p: { startup: StartupApi }) {
       <p className="hint hint-below">Starts in the tray and picks up your devices and EQ from last time, so your audio works before you open anything.</p>
       {error && <p className="notice">{error}</p>}
 
+      <h2>Audio device</h2>
+      <ul className="group">
+        <li className="row">
+          <span className="row-title">Install or repair the freeseries audio device</span>
+          <button className="button" onClick={p.onSetup}>
+            Open setup
+          </button>
+        </li>
+      </ul>
+
       <h2>Closing the window</h2>
       <p className="hint">
         Closing freeseries hides it in the tray next to the clock and your audio keeps running. To stop it completely, right-click the tray icon
         and choose Quit.
       </p>
+    </div>
+  );
+}
+
+export function Setup(p: { setup: SetupApi; detected: Device | undefined; hasOutputs: boolean; onRefresh(): void; onDone(): void }) {
+  const [installing, setInstalling] = useState(false);
+  const [error, setError] = useState<string>();
+  const [defaultId, setDefaultId] = useState<string | null>(null);
+
+  // The second step happens in Windows' own settings, so watch for it rather than ask.
+  useEffect(() => {
+    const check = () => p.setup.defaultOutput().then(setDefaultId, () => {});
+    check();
+    const poll = setInterval(check, 1500);
+    return () => clearInterval(poll);
+  }, [p.setup]);
+
+  const installed = p.detected !== undefined;
+  const isDefault = installed && defaultId === p.detected!.id;
+  const install = () => {
+    setInstalling(true);
+    setError(undefined);
+    p.setup
+      .installDevice()
+      .then(p.onRefresh, (e) => setError(String(e)))
+      .finally(() => setInstalling(false));
+  };
+
+  const step = (done: boolean, title: string, body: React.ReactNode) => (
+    <li className={`step${done ? " is-done" : ""}`}>
+      <span className="step-mark" aria-hidden="true">
+        {done && <svg viewBox="0 0 12 12"><path d="M2.5 6.5 5 9l4.5-5.5" /></svg>}
+      </span>
+      <div>
+        <h3>
+          {title}
+          {done && <span className="visually-hidden"> (done)</span>}
+        </h3>
+        {body}
+      </div>
+    </li>
+  );
+
+  return (
+    <div className="page">
+      <p className="hint">
+        freeseries sits between your apps and your headphones. Three steps get it there; the first one is the only one that needs your
+        permission.
+      </p>
+      <ol className="steps">
+        {step(
+          installed,
+          "Install the freeseries audio device",
+          <>
+            <p className="hint">
+              Your apps play into this device, and freeseries passes the sound on to your headphones with your EQ applied. It's a driver signed
+              by Microsoft, so Windows will ask for permission once.
+            </p>
+            {installed ? (
+              <p className="step-state">Installed as {p.detected!.name}</p>
+            ) : (
+              <button className="button button-primary" onClick={install} disabled={installing}>
+                {installing ? "Waiting for Windows…" : "Install"}
+              </button>
+            )}
+            {error && <p className="notice">{error}</p>}
+          </>,
+        )}
+        {step(
+          isDefault,
+          "Make it your default output",
+          <>
+            <p className="hint">In Sound settings, under Output, choose the freeseries device. This page notices when you've done it.</p>
+            {isDefault ? (
+              <p className="step-state">Windows is playing into freeseries</p>
+            ) : (
+              <button className="button" onClick={() => p.setup.openSoundSettings()} disabled={!installed}>
+                Open Sound settings
+              </button>
+            )}
+          </>,
+        )}
+        {step(
+          p.hasOutputs,
+          "Choose what you listen on",
+          <>
+            <p className="hint">
+              Pick your headphones and anything else you listen on. If you use Dolby Atmos or DTS Headphone:X, turn it on for the freeseries
+              device and off for your headphones, so it's only applied once.
+            </p>
+            <button className={`button${isDefault && !p.hasOutputs ? " button-primary" : ""}`} onClick={p.onDone} disabled={!installed}>
+              Open Devices
+            </button>
+          </>,
+        )}
+      </ol>
     </div>
   );
 }

@@ -27,6 +27,16 @@ export interface WindowApi {
   close(): void;
 }
 
+export interface SetupApi {
+  /** Installs the virtual audio device. Windows asks for permission first; rejects with a readable reason. */
+  installDevice(): Promise<string[]>;
+  /** Names the device's endpoint "freeseries". No prompt. */
+  nameDevice(): Promise<string[]>;
+  openSoundSettings(): Promise<void>;
+  /** Id of the output Windows plays to by default. */
+  defaultOutput(): Promise<string | null>;
+}
+
 export interface StartupApi {
   startsWithWindows(): Promise<boolean>;
   /** Rejects with a readable message when it can't be changed (e.g. a development build). */
@@ -93,6 +103,16 @@ export async function tauriEngine(): Promise<EngineApi> {
   };
 }
 
+export async function tauriSetup(): Promise<SetupApi> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return {
+    installDevice: () => invoke("install_device"),
+    nameDevice: () => invoke("name_device"),
+    openSoundSettings: () => invoke("open_sound_settings"),
+    defaultOutput: () => invoke("default_output"),
+  };
+}
+
 export async function tauriStartup(): Promise<StartupApi> {
   const { invoke } = await import("@tauri-apps/api/core");
   return {
@@ -119,13 +139,28 @@ export async function tauriWindow(): Promise<WindowApi> {
   return { minimize: () => void w.minimize(), toggleMaximize: () => void w.toggleMaximize(), close: () => void w.close() };
 }
 
+// Browser preview state. `?fresh` previews a PC where nothing is set up yet.
+const preview = { installed: !location.search.includes("fresh"), isDefault: !location.search.includes("fresh") };
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+export const mockSetup = (): SetupApi => ({
+  installDevice: async () => {
+    await wait(1400);
+    preview.installed = true;
+    return ["driver installed", "endpoint: 'Speakers' -> 'freeseries'"];
+  },
+  nameDevice: async () => ["endpoint: 'Speakers' -> 'freeseries'"],
+  openSoundSettings: async () => void wait(2500).then(() => (preview.isDefault = true)), // "the user" picks it
+  defaultOutput: async () => (preview.installed && preview.isDefault ? "wasapi:fx" : "wasapi:rtk"),
+});
+
 /** Browser preview: a fake engine with the devices of a typical setup. */
 export function mockEngine(): EngineApi {
   let state: Snapshot = { status: { state: "stopped" }, bypass: false };
   const kinds: Record<string, Kind> = { PK: "peak", LSC: "lowShelf", LS: "lowShelf", HSC: "highShelf", HS: "highShelf" };
   return {
     listOutputs: async () => [
-      { id: "wasapi:fx", name: "Speakers (FxSound Audio Enhancer)", channels: 2, sampleRate: 48000 },
+      ...(preview.installed ? [{ id: "wasapi:fx", name: "freeseries (FxSound Audio Enhancer)", channels: 2, sampleRate: 48000 }] : []),
       { id: "wasapi:hdmi", name: "Odyssey G65B (NVIDIA High Definition Audio)", channels: 2, sampleRate: 48000 },
       { id: "wasapi:rtk", name: "Speakers (Realtek(R) Audio)", channels: 2, sampleRate: 48000 },
       { id: "wasapi:arctis", name: "Headphones (Arctis Nova Pro Wireless)", channels: 2, sampleRate: 48000 },

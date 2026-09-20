@@ -11,6 +11,13 @@ use std::time::Instant;
 
 pub struct Wasapi;
 
+impl Wasapi {
+    /// The id of the output Windows sends audio to by default, in the same form as `DeviceInfo::id`.
+    pub fn default_output_id(&self) -> Option<String> {
+        Some(cpal::default_host().default_output_device()?.id().ok()?.to_string())
+    }
+}
+
 impl AudioBackend for Wasapi {
     type Session = (cpal::Stream, cpal::Stream);
 
