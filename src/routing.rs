@@ -21,7 +21,7 @@ use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW,
 #[serde(rename_all = "camelCase")]
 pub struct AudioApp {
     pub pid: u32,
-    /// The executable's name without ".exe": "Discord", "chrome".
+    /// What the app calls itself ("Google Chrome"), or the executable's name without ".exe" if it doesn't say.
     pub name: String,
     pub path: String,
     /// The device this app is pinned to, as a `DeviceInfo::id`. `None`: it follows the Windows default.
@@ -146,6 +146,7 @@ impl AppRouting for WindowsRouting {
             if name.to_lowercase().starts_with("freeseries") {
                 continue;
             }
+            let name = description_of(&path).unwrap_or(name);
             apps.push(AudioApp { pid, name, device: pinned_device(&policy, pid), path });
         }
         apps.sort_by_key(|a| a.name.to_lowercase());
@@ -168,6 +169,32 @@ impl AppRouting for WindowsRouting {
 
     fn icon(&self, path: &str) -> Option<Icon> {
         icon_of(path)
+    }
+}
+
+/// The "File description" of an executable's version resource: what Task Manager shows as the app's name.
+fn description_of(path: &str) -> Option<String> {
+    use windows::Win32::Storage::FileSystem::{GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW};
+    unsafe {
+        let path = HSTRING::from(path);
+        let size = GetFileVersionInfoSizeW(&path, None);
+        if size == 0 {
+            return None;
+        }
+        let mut block = vec![0u8; size as usize];
+        GetFileVersionInfoW(&path, None, size, block.as_mut_ptr() as *mut c_void).ok()?;
+        let query = |key: &str| {
+            let (mut value, mut len) = (std::ptr::null_mut::<c_void>(), 0u32);
+            (VerQueryValueW(block.as_ptr() as *const c_void, &HSTRING::from(key), &mut value, &mut len).as_bool() && len > 0).then_some((value, len))
+        };
+        // The strings are filed under the language and code page the resource was built with.
+        let (translation, _) = query(r"\VarFileInfo\Translation")?;
+        let [language, code_page] = *(translation as *const [u16; 2]);
+        let (text, len) = query(&format!(r"\StringFileInfo\{language:04x}{code_page:04x}\FileDescription"))?;
+        let text = String::from_utf16_lossy(std::slice::from_raw_parts(text as *const u16, len as usize));
+        // Some resources (Spotify's) claim a length that runs past the terminator into the next entry.
+        let text = text.split('\0').next().unwrap_or_default().trim();
+        (!text.is_empty()).then(|| text.to_string())
     }
 }
 
@@ -244,6 +271,12 @@ fn icon_of(path: &str) -> Option<Icon> {
 #[cfg(test)]
 mod tests {
     /// The app asks for every icon at once, from worker threads.
+    #[test]
+    fn apps_go_by_the_name_they_give_themselves() {
+        assert_eq!(super::description_of(r"C:\Windows\explorer.exe").as_deref(), Some("Windows Explorer"));
+        assert_eq!(super::description_of(r"C:\Windows\no-such.exe"), None);
+    }
+
     #[test]
     fn icons_survive_being_fetched_in_parallel() {
         let exes = ["explorer.exe", "notepad.exe", "regedit.exe", r"System32\cmd.exe", r"System32\taskmgr.exe", r"System32\control.exe", r"System32\calc.exe"];
