@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { AutoEqApi, AutoEqEntry, Band, Device, Kind, LogEntry, Preset, Route, Status } from "./api";
 import EqGraph, { bandColor } from "./EqGraph";
 import { DB_RANGE, F_MAX, F_MIN, clamp, formatDb, frequencies, totalGainDb } from "./eqmath";
+import { BUILTIN } from "./builtin";
 import type { NamedPreset } from "./store";
 
 const KINDS: { kind: Kind; label: string }[] = [
@@ -148,6 +149,17 @@ export function Presets(p: {
 
   return (
     <div className="page">
+      <h2>Included</h2>
+      <ul className="group">
+        {BUILTIN.map((named) => (
+          <li key={named.name} className="row">
+            <span className="row-title">{named.name}</span>
+            <span className="row-detail">{named.preset.bands.length} bands</span>
+            {p.current === named.name ? <span className="row-detail">In use</span> : <button className="link" onClick={() => p.onLoad(named)}>Use</button>}
+          </li>
+        ))}
+      </ul>
+
       <h2>Your presets</h2>
       <ul className="group">
         {p.library.map((named) => (
