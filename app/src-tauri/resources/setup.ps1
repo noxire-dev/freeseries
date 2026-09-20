@@ -9,7 +9,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$Pkg,
     [Parameter(Mandatory = $true)][string]$Result,
-    [string]$Name = "freeseries",
+    # One name per driver instance, handed out in this order to endpoints that don't have one yet.
+    [string[]]$Names = @("freeseries", "freeseries Chat", "freeseries Media"),
     [switch]$DryRun,
     [switch]$RenameOnly,
     [switch]$AddInstance
@@ -97,23 +98,32 @@ public static class Endpoint {
     return Marshal.PtrToStringUni(v.p) ?? "";
   }
 
-  /// Finds every active render endpoint whose driver name contains `driver` and, when `apply` is
-  /// set, names it `newName`. Returns "old name -> new name" lines. (A bool, not a null name:
-  /// PowerShell hands C# an empty string for $null, and an empty name is a valid rename.)
-  public static string[] Rename(string driver, string newName, bool apply) {
-    if (apply && String.IsNullOrWhiteSpace(newName)) throw new ArgumentException("the endpoint name cannot be empty");
+  /// Gives every active render endpoint of `driver` one of `names`: endpoints that already carry
+  /// one keep it, the others get the first name still free. With `apply` off it only reports.
+  /// (A bool rather than null names: PowerShell hands C# an empty string for $null, and an empty
+  /// name is a valid rename.)
+  public static string[] Rename(string driver, string[] names, bool apply) {
+    foreach (var n in names) if (String.IsNullOrWhiteSpace(n)) throw new ArgumentException("an endpoint name cannot be empty");
     var done = new List<string>();
     var all = (IMMDeviceEnumerator)new MMDeviceEnumerator();
     IMMDeviceCollection devices; Marshal.ThrowExceptionForHR(all.EnumAudioEndpoints(0, 1, out devices)); // eRender, ACTIVE
     int count; devices.GetCount(out count);
+    var ours = new List<IMMDevice>(); var current = new List<string>();
     for (int i = 0; i < count; i++) {
       IMMDevice device; devices.Item(i, out device);
       IPropertyStore read; Marshal.ThrowExceptionForHR(device.OpenPropertyStore(0, out read)); // STGM_READ
       if (Read(read, InterfaceName).IndexOf(driver, StringComparison.OrdinalIgnoreCase) < 0) continue;
-      string old = Read(read, DeviceDesc);
+      ours.Add(device); current.Add(Read(read, DeviceDesc));
+    }
+    var free = new List<string>(names);
+    foreach (var name in current) free.Remove(name);
+    for (int i = 0; i < ours.Count; i++) {
+      string old = current[i];
+      if (Array.IndexOf(names, old) >= 0) { done.Add("'" + old + "' (already named)"); continue; }
+      if (free.Count == 0) { done.Add("'" + old + "' (no name left for it)"); continue; }
+      string newName = free[0]; free.RemoveAt(0);
       if (!apply) { done.Add("'" + old + "' would become '" + newName + "'"); continue; }
-      if (old == newName) { done.Add("'" + old + "' (already named)"); continue; }
-      IPropertyStore write; Marshal.ThrowExceptionForHR(device.OpenPropertyStore(2, out write)); // STGM_READWRITE
+      IPropertyStore write; Marshal.ThrowExceptionForHR(ours[i].OpenPropertyStore(2, out write)); // STGM_READWRITE
       var value = new PropVariant { vt = 31, p = Marshal.StringToCoTaskMemUni(newName) };
       try { var key = DeviceDesc; Marshal.ThrowExceptionForHR(write.SetValue(ref key, ref value)); Marshal.ThrowExceptionForHR(write.Commit()); }
       finally { Marshal.FreeCoTaskMem(value.p); }
@@ -144,7 +154,7 @@ public static class Endpoint {
 
     # The rename is a nicety: never let it turn a successful install into a failure.
     try {
-        $renamed = [Endpoint]::Rename('FxSound', $Name, (-not $DryRun) -and (-not $AddInstance))
+        $renamed = [Endpoint]::Rename('FxSound', $Names, (-not $DryRun))
         if ($renamed.Count -eq 0) { Say "no endpoint to name yet" } else { $renamed | ForEach-Object { Say "endpoint: $_" } }
     } catch { Say "endpoint not renamed: $($_.Exception.Message)" }
 

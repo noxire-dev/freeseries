@@ -3,6 +3,7 @@ import type { About, AutoEqApi, AutoEqEntry, Band, Device, InfoApi, Kind, LogEnt
 import EqGraph, { bandColor } from "./EqGraph";
 import { DB_RANGE, F_MAX, F_MIN, clamp, combine, formatDb, formatPreset, frequencies, totalGainDb } from "./eqmath";
 import { BUILTIN } from "./builtin";
+import { isVirtualDevice } from "./devices";
 import type { NamedPreset, SavedOutput } from "./store";
 
 const KINDS: { kind: Kind; label: string }[] = [
@@ -432,7 +433,7 @@ export function Devices(p: {
 }) {
   const virtual = p.detected?.id ?? p.source;
   const chosen = new Set(p.outputs.map((o) => o.id));
-  const available = p.devices.filter((d) => d.id !== virtual && !chosen.has(d.id));
+  const available = p.devices.filter((d) => d.id !== virtual && !chosen.has(d.id) && !isVirtualDevice(d));
   // Reordering: drag a row, or use its arrow buttons (keyboard and screen readers).
   const [drag, setDrag] = useState<number | null>(null);
   const [over, setOver] = useState<number | null>(null);
