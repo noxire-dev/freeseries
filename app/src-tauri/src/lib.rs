@@ -97,6 +97,19 @@ fn open_sound_settings(app: tauri::AppHandle) -> Result<(), String> {
     app.opener().open_url("ms-settings:sound", None::<&str>).map_err(|e| e.to_string())
 }
 
+#[derive(serde::Serialize)]
+struct About {
+    version: &'static str,
+    commit: &'static str,
+    /// A development build: runs next to the installed app and never starts audio by itself.
+    dev: bool,
+}
+
+#[tauri::command]
+fn about() -> About {
+    About { version: env!("CARGO_PKG_VERSION"), commit: env!("FREESERIES_COMMIT"), dev: cfg!(debug_assertions) }
+}
+
 /// Where the log files live, for attaching to bug reports.
 #[tauri::command]
 fn open_log_folder(app: tauri::AppHandle) -> Result<(), String> {
@@ -202,7 +215,8 @@ pub fn run() {
             default_output,
             install_device,
             name_device,
-            open_sound_settings
+            open_sound_settings,
+            about
         ])
         .setup(|app| {
             let resources = app.path().resource_dir()?.join("resources");

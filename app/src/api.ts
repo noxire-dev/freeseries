@@ -41,6 +41,12 @@ export interface SetupApi {
   defaultOutput(): Promise<string | null>;
 }
 
+export interface About { version: string; commit: string; dev: boolean }
+
+export interface InfoApi {
+  about(): Promise<About>;
+}
+
 export interface StartupApi {
   startsWithWindows(): Promise<boolean>;
   /** Rejects with a readable message when it can't be changed (e.g. a development build). */
@@ -117,6 +123,11 @@ export async function tauriSetup(): Promise<SetupApi> {
     openSoundSettings: () => invoke("open_sound_settings"),
     defaultOutput: () => invoke("default_output"),
   };
+}
+
+export async function tauriInfo(): Promise<InfoApi> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return { about: () => invoke("about") };
 }
 
 export async function tauriStartup(): Promise<StartupApi> {
@@ -204,6 +215,8 @@ export function mockStartup(): StartupApi {
   let on = false;
   return { startsWithWindows: async () => on, setStartsWithWindows: async (enabled) => void (on = enabled) };
 }
+
+export const mockInfo = (): InfoApi => ({ about: async () => ({ version: "0.0.0", commit: "preview", dev: true }) });
 
 export const mockLog = (): LogApi => ({
   subscribe: async (onEntry) => {

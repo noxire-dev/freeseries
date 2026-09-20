@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AutoEqApi, Device, EngineApi, LogApi, LogEntry, Preset, SetupApi, StartupApi, Status, WindowApi } from "./api";
+import type { AutoEqApi, Device, EngineApi, InfoApi, LogApi, LogEntry, Preset, SetupApi, StartupApi, Status, WindowApi } from "./api";
 import { findVirtualDevice, shortName } from "./devices";
 import type { SavedOutput, SettingsStore } from "./store";
 import { Devices, Equalizer, Log, Presets, Settings, Setup } from "./views";
@@ -11,10 +11,12 @@ const NAV: { view: View; label: string; icon: string }[] = [
   { view: "presets", label: "Presets", icon: "M5 6h14M5 12h14M5 18h9" },
   { view: "devices", label: "Devices", icon: "M5 18v-5a7 7 0 0 1 14 0v5M5 14.5h2.5v5H5zM16.5 14.5H19v5h-2.5z" },
   { view: "settings", label: "Settings", icon: "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z" },
-  { view: "log", label: "Log", icon: "M7 4h10a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM9 9h6M9 13h6M9 17h3" },
 ];
 
-const SECONDARY = new Set<View>(["settings", "log"]);
+const SECONDARY = new Set<View>(["settings"]);
+/** Pages reached from Settings keep it lit in the sidebar. */
+const UNDER_SETTINGS = new Set<View>(["log", "setup"]);
+const TITLES: Partial<Record<View, string>> = { log: "Log", setup: "Set up freeseries" };
 
 const STATUS_TEXT: Record<Status["state"], string> = { stopped: "Stopped", running: "Running", reconnecting: "Reconnecting…" };
 const FLAT: Preset = { preampDb: 0, bands: [] };
@@ -25,6 +27,7 @@ export default function App(p: {
   log: LogApi;
   startup: StartupApi;
   setup: SetupApi;
+  info: InfoApi;
   autoEq: AutoEqApi;
   settings: SettingsStore;
   /** A development build sits next to the installed app, so it must not start playing by itself. */
@@ -123,7 +126,12 @@ export default function App(p: {
         {[NAV.filter((n) => !SECONDARY.has(n.view)), NAV.filter((n) => SECONDARY.has(n.view))].map((items, group) => (
           <nav key={group} className={group === 0 ? "nav-primary" : undefined} aria-label={group === 0 ? "Main" : "More"}>
             {items.map((n) => (
-              <button key={n.view} className="nav" aria-current={view === n.view ? "page" : undefined} onClick={() => setView(n.view)}>
+              <button
+                key={n.view}
+                className="nav"
+                aria-current={view === n.view || (n.view === "settings" && UNDER_SETTINGS.has(view)) ? "page" : undefined}
+                onClick={() => setView(n.view)}
+              >
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path d={n.icon} />
                 </svg>
@@ -144,7 +152,7 @@ export default function App(p: {
       <main className="main">
         <header className="toolbar" data-tauri-drag-region>
           <h2 className="toolbar-title" data-tauri-drag-region>
-            {view === "equalizer" ? (editing?.presetName ?? "Equalizer") : view === "setup" ? "Set up freeseries" : NAV.find((n) => n.view === view)!.label}
+            {view === "equalizer" ? (editing?.presetName ?? "Equalizer") : (TITLES[view] ?? NAV.find((n) => n.view === view)?.label)}
             {view === "equalizer" && editing && <small> for {nameOf(editing.id)}</small>}
           </h2>
           {view === "equalizer" && editing && (
@@ -209,13 +217,9 @@ export default function App(p: {
             library={library}
             current={editing?.presetName ?? ""}
             target={editing ? nameOf(editing.id) : undefined}
-            onLoad={(named) => {
-              applyPreset(named.preset, named.name);
-              setView("equalizer");
-            }}
+            onLoad={(named) => applyPreset(named.preset, named.name)}
             onLoadAutoEq={async (entry) => {
               applyPreset(await engine.parsePreset(await p.autoEq.fetchPreset(entry)), entry.name);
-              setView("equalizer");
             }}
             onSave={(name) => {
               if (!editing) return;
@@ -225,7 +229,16 @@ export default function App(p: {
             onDelete={(name) => setLibrary(library.filter((n) => n.name !== name))}
           />
         )}
-        {view === "settings" && <Settings startup={p.startup} onSetup={() => setView("setup")} />}
+        {view === "settings" && (
+          <Settings
+            startup={p.startup}
+            info={p.info}
+            problems={entries.filter((e) => e.level !== "info").length}
+            onSetup={() => setView("setup")}
+            onLog={() => setView("log")}
+            onOpenLogFolder={p.log.openFolder}
+          />
+        )}
         {view === "setup" && (
           <Setup
             setup={p.setup}
@@ -235,7 +248,7 @@ export default function App(p: {
             onDone={() => setView("devices")}
           />
         )}
-        {view === "log" && <Log entries={entries} onOpenFolder={p.log.openFolder} />}
+        {view === "log" && <Log entries={entries} onOpenFolder={p.log.openFolder} onBack={() => setView("settings")} />}
         {view === "devices" && (
           <Devices
             devices={devices}

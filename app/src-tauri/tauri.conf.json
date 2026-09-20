@@ -43,6 +43,11 @@
       "resources/fxvad/*"
     ],
     "license": "AGPL-3.0-or-later",
-    "licenseFile": "../../LICENSE"
+    "licenseFile": "../../LICENSE",
+    "windows": {
+      "nsis": {
+        "installerHooks": "./windows/hooks.nsh"
+      }
+    }
   }
 }

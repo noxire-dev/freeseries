@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { AutoEqApi, AutoEqEntry, Band, Device, Kind, LogEntry, Preset, SetupApi, StartupApi, Status } from "./api";
+import type { About, AutoEqApi, AutoEqEntry, Band, Device, InfoApi, Kind, LogEntry, Preset, SetupApi, StartupApi, Status } from "./api";
 import EqGraph, { bandColor } from "./EqGraph";
 import { DB_RANGE, F_MAX, F_MIN, clamp, formatDb, frequencies, totalGainDb } from "./eqmath";
 import { BUILTIN } from "./builtin";
@@ -275,7 +275,11 @@ export function Presets(p: {
 
   return (
     <div className="page">
-      <p className="hint">{p.target ? `A preset you pick here is applied to ${p.target}.` : "Add an output in Devices first, then pick its preset here."}</p>
+      <p className="hint">
+        {p.target
+          ? `A preset you pick here is applied to ${p.target} straight away, so you can try one after another while something plays.`
+          : "Add an output in Devices first, then pick its preset here."}
+      </p>
       <h2>Included</h2>
       <ul className="group">
         {BUILTIN.map((named) => (
@@ -337,6 +341,9 @@ export function Presets(p: {
             <li key={entry.path} className="row">
               <span className="row-title">{entry.name}</span>
               <span className="row-detail">{entry.source}</span>
+              {p.current === entry.name && loading !== entry.path ? (
+                <span className="row-detail">In use</span>
+              ) : (
               <button
                 className="link"
                 disabled={loading === entry.path}
@@ -347,6 +354,7 @@ export function Presets(p: {
               >
                 {loading === entry.path ? "Loading…" : "Use"}
               </button>
+              )}
             </li>
           ))}
         </ul>
@@ -516,7 +524,7 @@ export function Devices(p: {
   );
 }
 
-export function Log(p: { entries: (LogEntry & { time: string })[]; onOpenFolder(): void }) {
+export function Log(p: { entries: (LogEntry & { time: string })[]; onOpenFolder(): void; onBack(): void }) {
   const problems = p.entries.filter((e) => e.level !== "info").length;
   return (
     <div className="page page-wide">
@@ -528,9 +536,14 @@ export function Log(p: { entries: (LogEntry & { time: string })[]; onOpenFolder(
               ? "No glitches or errors since the app started."
               : `${problems} ${problems === 1 ? "problem" : "problems"} since the app started. The full history is in the log files.`}
         </p>
-        <button className="button" onClick={p.onOpenFolder}>
-          Open log folder
-        </button>
+        <span className="actions-end">
+          <button className="button button-quiet" onClick={p.onBack}>
+            Back to Settings
+          </button>
+          <button className="button" onClick={p.onOpenFolder}>
+            Open log folder
+          </button>
+        </span>
       </div>
       {p.entries.length > 0 && (
         <ol className="group log">
@@ -546,8 +559,10 @@ export function Log(p: { entries: (LogEntry & { time: string })[]; onOpenFolder(
   );
 }
 
-export function Settings(p: { startup: StartupApi; onSetup(): void }) {
+export function Settings(p: { startup: StartupApi; info: InfoApi; problems: number; onSetup(): void; onLog(): void; onOpenLogFolder(): void }) {
   const [enabled, setEnabled] = useState(false);
+  const [about, setAbout] = useState<About>();
+  useEffect(() => void p.info.about().then(setAbout, () => {}), [p.info]);
   const [error, setError] = useState<string>();
   useEffect(() => {
     p.startup.startsWithWindows().then(setEnabled, (e) => setError(String(e)));
@@ -591,6 +606,36 @@ export function Settings(p: { startup: StartupApi; onSetup(): void }) {
       <p className="hint">
         Closing freeseries hides it in the tray next to the clock and your audio keeps running. To stop it completely, right-click the tray icon
         and choose Quit.
+      </p>
+
+      <h2>Log</h2>
+      <ul className="group">
+        <li className="row">
+          <span className="row-title">{p.problems === 0 ? "No glitches or errors since the app started" : `${p.problems} ${p.problems === 1 ? "problem" : "problems"} since the app started`}</span>
+          <button className="link" onClick={p.onOpenLogFolder}>
+            Open folder
+          </button>
+          <button className="button" onClick={p.onLog}>
+            View log
+          </button>
+        </li>
+      </ul>
+
+      <h2>About</h2>
+      <ul className="group">
+        <li className="row">
+          <span className="row-title">Version</span>
+          <span className="row-detail row-selectable">
+            {about ? `${about.version} (${about.commit})${about.dev ? ", development build" : ""}` : ""}
+          </span>
+        </li>
+        <li className="row">
+          <span className="row-title">License</span>
+          <span className="row-detail">Free software, AGPL-3.0</span>
+        </li>
+      </ul>
+      <p className="hint hint-below">
+        No account and no telemetry. freeseries only goes online to fetch a headphone preset when you search for one.
       </p>
     </div>
   );

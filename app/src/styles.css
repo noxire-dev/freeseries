@@ -1073,6 +1073,17 @@ a,
   white-space: nowrap;
 }
 
+.actions-end {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+
+.row-selectable {
+  user-select: text;
+  cursor: text;
+}
+
 .hint-below {
   margin-top: 8px;
 }
