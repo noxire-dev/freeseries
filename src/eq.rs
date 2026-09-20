@@ -107,6 +107,23 @@ fn coeffs(band: Band, sample_rate: f64) -> Coeffs {
     Coeffs { b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0 }
 }
 
+/// Where the limiter starts to act: -1 dBFS. Everything quieter passes through untouched.
+const LIMIT_KNEE: f32 = 0.891;
+
+/// Keeps boosted audio inside full scale. Below the knee it is the identity, so a preset with
+/// enough preamp headroom is never touched; above it the peak is bent smoothly towards 1.0
+/// instead of being chopped off flat, which is what the sound card would otherwise do.
+/// A waveshaper rather than a look-ahead limiter: it adds no latency.
+pub fn limit(samples: &mut [f32]) {
+    let room = 1.0 - LIMIT_KNEE;
+    for s in samples.iter_mut() {
+        let level = s.abs();
+        if level > LIMIT_KNEE {
+            *s = s.signum() * (LIMIT_KNEE + room * ((level - LIMIT_KNEE) / room).tanh());
+        }
+    }
+}
+
 /// Stateful EQ over interleaved f32 frames.
 pub struct Eq {
     channels: usize,
@@ -178,6 +195,23 @@ mod tests {
         eq.process(&mut buf);
         let peak = buf[24000..].iter().fold(0f32, |m, s| m.max(s.abs()));
         20.0 * (peak as f64).log10()
+    }
+
+    #[test]
+    fn limiter_is_transparent_until_the_knee_and_never_exceeds_full_scale() {
+        let mut quiet = [0.0, 0.5, -0.89, 0.891];
+        limit(&mut quiet);
+        assert_eq!(quiet, [0.0, 0.5, -0.89, 0.891]);
+
+        let mut loud: Vec<f32> = (0..400).map(|i| 0.9 + i as f32 * 0.01).collect(); // up to +14 dBFS
+        let before = loud.clone();
+        limit(&mut loud);
+        assert!(loud.iter().all(|s| *s <= 1.0), "must stay inside full scale");
+        assert!(loud.windows(2).all(|w| w[1] >= w[0]), "must stay monotonic, or it would fold the waveform");
+        assert!(loud[0] < before[0] + 1e-6 && (loud[0] - before[0]).abs() < 0.001, "continuous at the knee");
+        let mut negative = [-3.0];
+        limit(&mut negative);
+        assert!(negative[0] >= -1.0 && negative[0] < -0.99);
     }
 
     #[test]

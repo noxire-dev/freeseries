@@ -113,6 +113,7 @@ fn open(route: &Route, dsp: Arc<Dsp>, on_lost: Arc<dyn Fn() + Send + Sync>) -> R
             }
             if !dsp.bypassed() {
                 eq.process(&mut scratch);
+                crate::eq::limit(&mut scratch);
             }
             dsp.tap(&scratch, out_ch, rate as f32);
             let mut q = producer.lock().unwrap();

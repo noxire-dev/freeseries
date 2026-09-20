@@ -196,7 +196,7 @@ export function Equalizer(p: {
       <div className="eq-notice">
         {peak > 0.05 && (
           <p className="notice">
-            Loudest point is {formatDb(peak)} above full scale, so loud passages can clip.
+            Loudest point is {formatDb(peak)} above full scale. The limiter catches it, but loud passages will sound squashed.
             <button className="link" onClick={() => onPreset({ ...preset, preampDb: Math.round((preset.preampDb - peak) * 10) / 10 })}>
               Lower preamp to {formatDb(preset.preampDb - peak)}
             </button>
