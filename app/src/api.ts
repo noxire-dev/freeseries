@@ -24,6 +24,15 @@ export interface WindowApi {
   close(): void;
 }
 
+export type LogLevel = "info" | "warn" | "error";
+export interface LogEntry { level: LogLevel; message: string }
+
+export interface LogApi {
+  /** Calls `onEntry` for every engine log line from now on. Resolves to the unsubscribe function. */
+  subscribe(onEntry: (entry: LogEntry) => void): Promise<() => void>;
+  openFolder(): Promise<void>;
+}
+
 export interface AutoEqEntry { name: string; source: string; path: string }
 
 /** The AutoEq headphone database on GitHub. Fetched on demand, nothing is bundled. */
@@ -75,6 +84,18 @@ export async function tauriEngine(): Promise<EngineApi> {
   };
 }
 
+export async function tauriLog(): Promise<LogApi> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  const { attachLogger } = await import("@tauri-apps/plugin-log");
+  // Plugin levels are numeric: 1 trace, 2 debug, 3 info, 4 warn, 5 error.
+  const level = (n: number): LogLevel => (n >= 5 ? "error" : n === 4 ? "warn" : "info");
+  return {
+    // Lines arrive as "[date][time][target][LEVEL] message"; the Log page has its own time column.
+    subscribe: (onEntry) => attachLogger((r) => onEntry({ level: level(r.level), message: r.message.replace(/^(\[[^\]]*\])+\s*/, "") })),
+    openFolder: () => invoke("open_log_folder"),
+  };
+}
+
 export async function tauriWindow(): Promise<WindowApi> {
   const { getCurrentWindow } = await import("@tauri-apps/api/window");
   const w = getCurrentWindow();
@@ -108,5 +129,16 @@ export function mockEngine(): EngineApi {
     },
   };
 }
+
+export const mockLog = (): LogApi => ({
+  subscribe: async (onEntry) => {
+    onEntry({ level: "info", message: "[preview] opening FxSound Audio Enhancer (2 ch) -> Arctis Nova Pro Wireless (2 ch) at 48000 Hz" });
+    onEntry({ level: "info", message: "[preview] engine Running" });
+    onEntry({ level: "warn", message: "[preview] capture glitch: A buffer underrun or overrun occurred." });
+    onEntry({ level: "error", message: "[preview] capture stream died: device invalidated" });
+    return () => {};
+  },
+  openFolder: async () => {},
+});
 
 export const mockWindow = (): WindowApi => ({ minimize() {}, toggleMaximize() {}, close() {} });

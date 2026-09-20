@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { AutoEqApi, AutoEqEntry, Band, Device, Kind, Preset, Route, Status } from "./api";
+import type { AutoEqApi, AutoEqEntry, Band, Device, Kind, LogEntry, Preset, Route, Status } from "./api";
 import EqGraph, { bandColor } from "./EqGraph";
 import { DB_RANGE, F_MAX, F_MIN, clamp, formatDb, frequencies, totalGainDb } from "./eqmath";
 import type { NamedPreset } from "./store";
@@ -272,6 +272,36 @@ export function Devices(p: { devices: Device[]; route: Route | null; status: Sta
         </button>
         {p.status.state === "reconnecting" && <span className="hint">Reconnecting: {p.status.error}</span>}
       </div>
+    </div>
+  );
+}
+
+export function Log(p: { entries: (LogEntry & { time: string })[]; onOpenFolder(): void }) {
+  const problems = p.entries.filter((e) => e.level !== "info").length;
+  return (
+    <div className="page page-wide">
+      <div className="actions actions-top">
+        <p className="hint">
+          {p.entries.length === 0
+            ? "Nothing logged yet. Engine events show up here as they happen."
+            : problems === 0
+              ? "No glitches or errors since the app started."
+              : `${problems} ${problems === 1 ? "problem" : "problems"} since the app started. The full history is in the log files.`}
+        </p>
+        <button className="button" onClick={p.onOpenFolder}>
+          Open log folder
+        </button>
+      </div>
+      {p.entries.length > 0 && (
+        <ol className="group log">
+          {p.entries.map((e, i) => (
+            <li key={i} className={`log-line is-${e.level}`}>
+              <time>{e.time}</time>
+              <span>{e.message}</span>
+            </li>
+          ))}
+        </ol>
+      )}
     </div>
   );
 }

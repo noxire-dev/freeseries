@@ -660,6 +660,50 @@ button {
   margin-top: 20px;
 }
 
+.page-wide > * {
+  max-width: none;
+}
+
+.actions-top {
+  margin: 0 0 12px;
+  justify-content: space-between;
+}
+
+.actions-top .hint {
+  margin: 0;
+}
+
+.log {
+  padding: 6px 0;
+  user-select: text;
+}
+
+.group.log > li + li {
+  border-top: 0;
+}
+
+.log-line {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 10px;
+  padding: 3px 12px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.log-line time {
+  color: var(--label-3);
+}
+
+.log-line.is-warn span {
+  color: #ffd08a;
+}
+
+.log-line.is-error span {
+  color: #ff8a82;
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation: none !important;

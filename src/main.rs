@@ -1,11 +1,25 @@
 //! CLI for the engine, for development and soak testing. The app lives in `src-tauri`.
 
-use freeseries::engine::{AudioBackend, Engine, Route, Status};
+use freeseries::engine::{AudioBackend, Engine, Route};
 use freeseries::{eq, wasapi::Wasapi};
 use std::error::Error;
 use std::time::Duration;
 
+/// The engine logs through the `log` facade; the CLI just prints it.
+struct Stderr;
+impl log::Log for Stderr {
+    fn enabled(&self, _: &log::Metadata) -> bool {
+        true
+    }
+    fn log(&self, record: &log::Record) {
+        eprintln!("{:5} {}", record.level(), record.args());
+    }
+    fn flush(&self) {}
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
+    log::set_logger(&Stderr).map_err(|e| e.to_string())?;
+    log::set_max_level(log::LevelFilter::Info);
     let args: Vec<String> = std::env::args().skip(1).collect();
     let devices = Wasapi.outputs()?;
 
@@ -25,13 +39,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("{} EQ bands. Ctrl+C to stop.", engine.dsp.preset().bands.len());
     engine.set_route(Some(Route { from: device(&args[1])?, to: device(&args[2])? }));
 
-    let mut last = Status::Stopped;
     loop {
-        let status = engine.status();
-        if status != last {
-            println!("{status:?}");
-            last = status;
-        }
-        std::thread::sleep(Duration::from_millis(200));
+        std::thread::sleep(Duration::from_secs(3600));
     }
 }

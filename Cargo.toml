@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 cpal = "0.18"
+log = "0.4.34"
 serde = { version = "1.0.229", features = ["derive"] }

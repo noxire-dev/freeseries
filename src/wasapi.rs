@@ -49,6 +49,8 @@ fn open(route: &Route, dsp: Arc<Dsp>, on_lost: Arc<dyn Fn() + Send + Sync>) -> R
     }
     let (in_ch, out_ch) = (in_cfg.channels() as usize, out_cfg.channels() as usize);
     let rate = out_cfg.sample_rate() as usize;
+    let name = |d: &cpal::Device| d.description().map(|d| d.name().to_string()).unwrap_or_default();
+    log::info!("opening {} ({in_ch} ch) -> {} ({out_ch} ch) at {rate} Hz", name(&from), name(&to));
 
     // ponytail: mutex'd queue between two audio callbacks, and no clock-drift compensation between
     // the two devices (overflow drops oldest, underrun plays silence). examples/soak.rs shows it
@@ -59,8 +61,10 @@ fn open(route: &Route, dsp: Arc<Dsp>, on_lost: Arc<dyn Fn() + Send + Sync>) -> R
     let on_error = |side: &'static str| {
         let on_lost = on_lost.clone();
         move |e: cpal::Error| {
-            eprintln!("{side} error: {e}");
-            if e.kind() != cpal::ErrorKind::Xrun {
+            if e.kind() == cpal::ErrorKind::Xrun {
+                log::warn!("{side} glitch: {e}");
+            } else {
+                log::error!("{side} stream died: {e}");
                 on_lost();
             }
         }

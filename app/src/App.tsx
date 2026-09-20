@@ -1,19 +1,20 @@
 import { useEffect, useRef, useState } from "react";
-import type { AutoEqApi, Device, EngineApi, Preset, Route, Status, WindowApi } from "./api";
+import type { AutoEqApi, Device, EngineApi, LogApi, LogEntry, Preset, Route, Status, WindowApi } from "./api";
 import type { SettingsStore } from "./store";
-import { Devices, Equalizer, Presets } from "./views";
+import { Devices, Equalizer, Log, Presets } from "./views";
 
-type View = "equalizer" | "presets" | "devices";
+type View = "equalizer" | "presets" | "devices" | "log";
 
 const NAV: { view: View; label: string; icon: string }[] = [
   { view: "equalizer", label: "Equalizer", icon: "M4 7h9m4 0h3M4 17h3m4 0h9M15 4.5v5M9 14.5v5" },
   { view: "presets", label: "Presets", icon: "M5 6h14M5 12h14M5 18h9" },
   { view: "devices", label: "Devices", icon: "M5 18v-5a7 7 0 0 1 14 0v5M5 14.5h2.5v5H5zM16.5 14.5H19v5h-2.5z" },
+  { view: "log", label: "Log", icon: "M7 4h10a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM9 9h6M9 13h6M9 17h3" },
 ];
 
 const STATUS_TEXT: Record<Status["state"], string> = { stopped: "Stopped", running: "Running", reconnecting: "Reconnecting…" };
 
-export default function App(p: { engine: EngineApi; win: WindowApi; autoEq: AutoEqApi; settings: SettingsStore }) {
+export default function App(p: { engine: EngineApi; win: WindowApi; log: LogApi; autoEq: AutoEqApi; settings: SettingsStore }) {
   const { engine, settings } = p;
   const [saved] = useState(() => settings.load());
   const [view, setView] = useState<View>(saved.route ? "equalizer" : "devices");
@@ -24,6 +25,15 @@ export default function App(p: { engine: EngineApi; win: WindowApi; autoEq: Auto
   const [bypass, setBypass] = useState(saved.bypass);
   const [library, setLibrary] = useState(saved.library);
   const [status, setStatus] = useState<Status>({ state: "stopped" });
+  const [entries, setEntries] = useState<(LogEntry & { time: string })[]>([]);
+
+  // Subscribed for the whole life of the app, so the Log page has history whenever it is opened.
+  useEffect(() => {
+    const stop = p.log.subscribe((entry) =>
+      setEntries((old) => [...old.slice(-499), { ...entry, time: new Date().toLocaleTimeString([], { hour12: false }) }]),
+    );
+    return () => void stop.then((unsubscribe) => unsubscribe());
+  }, [p.log]);
 
   // The engine starts empty on every launch; hand it what was in use last time.
   useEffect(() => {
@@ -138,6 +148,7 @@ export default function App(p: { engine: EngineApi; win: WindowApi; autoEq: Auto
             onDelete={(name) => setLibrary(library.filter((n) => n.name !== name))}
           />
         )}
+        {view === "log" && <Log entries={entries} onOpenFolder={p.log.openFolder} />}
         {view === "devices" && (
           <Devices
             devices={devices}

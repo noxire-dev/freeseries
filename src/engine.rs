@@ -127,6 +127,7 @@ impl Engine {
                 };
                 match cmd {
                     Some(Cmd::Quit) => return,
+                    Some(Cmd::Route(new)) if new == route && session.is_some() => continue,
                     Some(Cmd::Route(new)) => {
                         session = None;
                         route = new;
@@ -136,20 +137,21 @@ impl Engine {
                     None => {}
                 }
                 let Some(r) = &route else {
-                    *status.lock().unwrap() = Status::Stopped;
+                    set_status(&status, Status::Stopped);
                     continue;
                 };
                 if session.is_none() {
                     generation += 1;
                     let (tx, g) = (tx.clone(), generation);
                     let on_lost = Box::new(move || drop(tx.send(Cmd::Lost(g))));
-                    *status.lock().unwrap() = match backend.open(r, dsp.clone(), on_lost) {
+                    let next = match backend.open(r, dsp.clone(), on_lost) {
                         Ok(s) => {
                             session = Some(s);
                             Status::Running
                         }
                         Err(e) => Status::Reconnecting(e),
                     };
+                    set_status(&status, next);
                 }
             }
         });
@@ -163,6 +165,18 @@ impl Engine {
 
     pub fn status(&self) -> Status {
         self.status.lock().unwrap().clone()
+    }
+}
+
+/// Logs transitions only, so a device that stays gone doesn't write a line every retry.
+fn set_status(status: &Mutex<Status>, next: Status) {
+    let mut current = status.lock().unwrap();
+    if *current != next {
+        match &next {
+            Status::Reconnecting(e) => log::warn!("audio is down, retrying: {e}"),
+            other => log::info!("engine {other:?}"),
+        }
+        *current = next;
     }
 }
 
@@ -224,6 +238,10 @@ mod tests {
         (fake.opened.lock().unwrap()[0])(); // the dead session's second stream reports too
         std::thread::sleep(Duration::from_millis(50));
         assert_eq!(opened(), 2, "a stale lost signal must not tear down the new session");
+
+        engine.set_route(Some(Route { from: "a".into(), to: "b".into() })); // same route again
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(opened(), 2, "re-sending the active route must not reopen the session");
 
         engine.set_route(None);
         wait_for("stopped", || engine.status() == Status::Stopped);
