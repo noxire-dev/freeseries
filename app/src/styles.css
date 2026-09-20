@@ -13,6 +13,11 @@
   --green: #30d158;
   --orange: #ff9f0a;
   --red: #ff453a;
+  /* Raised controls: a hairline edge, a lit top, a soft contact shadow. */
+  --raised: inset 0 0 0 1px rgb(255 255 255 / 0.07), inset 0 1px 0 rgb(255 255 255 / 0.06), 0 1px 2px rgb(0 0 0 / 0.3);
+  /* Sunken fields: the same edge, shaded from above instead. */
+  --sunken: inset 0 0 0 1px rgb(255 255 255 / 0.09), inset 0 1px 2px rgb(0 0 0 / 0.35);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --radius-group: 10px;
   --radius-control: 6px;
   color-scheme: dark;
@@ -38,6 +43,21 @@ body {
   overflow: hidden;
   user-select: none;
   cursor: default;
+}
+
+::selection {
+  background: rgb(10 132 255 / 0.5);
+  color: #fff;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.2) transparent;
+}
+
+input {
+  caret-color: var(--accent);
+  accent-color: var(--accent);
 }
 
 button,
@@ -83,9 +103,35 @@ button {
   padding: 0 8px;
   display: flex;
   align-items: center;
+  gap: 9px;
   font-size: 15px;
   font-weight: 650;
   letter-spacing: -0.015em;
+}
+
+.brand-mark {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.5);
+}
+
+.brand-mark rect {
+  fill: #2c2c2e;
+  stroke: rgb(255 255 255 / 0.14);
+}
+
+.brand-mark path {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+}
+
+.brand-mark circle {
+  stroke: #2c2c2e;
+  stroke-width: 0.8;
 }
 
 .brand small {
@@ -247,8 +293,14 @@ button {
   padding: 0 12px;
   border-radius: var(--radius-control);
   background: var(--fill-2);
+  box-shadow: var(--raised);
   font-weight: 500;
   white-space: nowrap;
+  transition: background 0.12s;
+}
+
+.button:active:not(:disabled) {
+  background: var(--fill-1);
 }
 
 .button:hover:not(:disabled) {
@@ -257,6 +309,7 @@ button {
 
 .button-primary {
   background: var(--accent);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.22), 0 1px 2px rgb(0 0 0 / 0.35);
   color: #fff;
 }
 
@@ -266,6 +319,7 @@ button {
 
 .button-quiet {
   background: none;
+  box-shadow: none;
   color: var(--label-2);
 }
 
@@ -292,8 +346,8 @@ button {
   display: flex;
   padding: 2px;
   border-radius: 7px;
-  background: var(--fill-1);
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.04);
+  background: rgb(0 0 0 / 0.25);
+  box-shadow: var(--sunken);
 }
 
 .segmented button {
@@ -305,17 +359,17 @@ button {
 }
 
 .segmented button[aria-checked="true"] {
-  background: var(--fill-3);
+  background: rgb(255 255 255 / 0.17);
   color: var(--label);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  box-shadow: var(--raised);
 }
 
 .text,
 .field-input {
   height: 28px;
   border-radius: var(--radius-control);
-  background: var(--fill-1);
-  box-shadow: inset 0 0 0 1px var(--separator);
+  background: rgb(0 0 0 / 0.25);
+  box-shadow: var(--sunken);
 }
 
 .text {
@@ -331,6 +385,7 @@ button {
 }
 
 .text-search {
+  display: block; /* an inline input ignores the column's auto margins */
   height: 32px;
   margin-bottom: 12px;
 }
@@ -406,17 +461,42 @@ button {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 64px;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  grid-template-rows: minmax(0, 1fr);
   gap: 12px;
+}
+
+.eq-stage > .graph,
+.eq-stage > .graph-empty {
+  grid-area: 1 / 1;
 }
 
 .graph {
   position: relative;
   min-height: 0;
   border-radius: var(--radius-group);
-  background: var(--well);
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.06), inset 0 1px 12px rgb(0 0 0 / 0.5);
+  background: linear-gradient(#1a1a1b, #121213);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.07), inset 0 2px 14px rgb(0 0 0 / 0.55);
   overflow: hidden;
+}
+
+.graph.is-morphing {
+  pointer-events: none;
+}
+
+.graph-empty {
+  place-self: center;
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  color: var(--label-2);
+  pointer-events: none;
+}
+
+.graph-empty div {
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
 }
 
 .graph svg {
@@ -426,18 +506,27 @@ button {
 }
 
 .grid {
-  stroke: rgb(255 255 255 / 0.06);
+  stroke: rgb(255 255 255 / 0.035);
   shape-rendering: crispEdges;
 }
 
+.grid-major {
+  stroke: rgb(255 255 255 / 0.085);
+}
+
 .grid-zero {
-  stroke: rgb(255 255 255 / 0.2);
+  stroke: rgb(255 255 255 / 0.24);
 }
 
 .tick {
   fill: var(--label-3);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
+}
+
+.curve-body {
+  fill: rgb(255 255 255 / 0.05);
+  pointer-events: none;
 }
 
 .curve {
@@ -449,9 +538,9 @@ button {
   pointer-events: none;
 }
 
-.graph path[fill] {
+.band-fill {
   pointer-events: none;
-  transition: opacity 0.15s;
+  transition: opacity 0.18s var(--ease-out);
 }
 
 .handle {
@@ -464,30 +553,39 @@ button {
   cursor: grabbing;
 }
 
+.handle-hit {
+  fill: transparent;
+}
+
 .handle-ring {
   fill: currentColor;
-  opacity: 0;
-  transition: opacity 0.15s;
+  fill-opacity: 0;
+  stroke: #fff;
+  stroke-width: 1.5;
+  stroke-opacity: 0;
+  transition: fill-opacity 0.15s, stroke-opacity 0.15s;
 }
 
 .handle:hover .handle-ring {
-  opacity: 0.18;
+  fill-opacity: 0.22;
 }
 
 .handle.is-selected .handle-ring,
 .handle:focus-visible .handle-ring {
-  opacity: 0.32;
+  fill-opacity: 0.28;
+  stroke-opacity: 0.9;
 }
 
 .handle-dot {
   fill: currentColor;
-  stroke: var(--well);
+  stroke: #141415;
   stroke-width: 2;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.6));
 }
 
 .handle-num {
-  fill: rgb(0 0 0 / 0.75);
-  font-size: 9px;
+  fill: rgb(0 0 0 / 0.78);
+  font-size: 10px;
   font-weight: 700;
   pointer-events: none;
 }
@@ -498,9 +596,43 @@ button {
   filter: none;
 }
 
-.graph.is-bypassed path[fill],
+.graph.is-bypassed .band-fill,
+.graph.is-bypassed .curve-body,
 .graph.is-bypassed .handle {
-  opacity: 0.35;
+  opacity: 0.3;
+}
+
+/* The values of the band in hand, right where the eyes already are. */
+.readout {
+  position: absolute;
+  translate: -50% calc(-100% - 20px);
+  display: flex;
+  gap: 10px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: rgb(44 44 46 / 0.92);
+  backdrop-filter: blur(12px);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1), 0 6px 18px rgb(0 0 0 / 0.5);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.readout.is-below {
+  translate: -50% 20px;
+}
+
+.readout b {
+  font-weight: 600;
+}
+
+.readout span {
+  color: var(--label);
+}
+
+.readout span + span {
+  color: var(--label-2);
 }
 
 .eq-notice {
@@ -511,13 +643,65 @@ button {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   justify-items: center;
-  gap: 8px;
+  gap: 6px;
   padding: 10px 0;
   border-radius: var(--radius-group);
   background: var(--fill-1);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.04);
+}
+
+/* The fader is taken out of flow: a vertical range input in flow reports its own height and
+   stretches the whole editor. The track gets its height from the grid row instead. */
+.preamp-track {
+  position: relative;
+  width: 100%;
+  min-height: 0;
+}
+
+.preamp-scale {
+  position: absolute;
+  inset: 9px 0; /* half a thumb, so the ticks line up with the thumb's centre */
+}
+
+.preamp-scale i {
+  position: absolute;
+  left: 7px;
+  right: 9px;
+  height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 9px;
+  font-style: normal;
+  color: var(--label-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.preamp-scale b {
+  font-weight: 500;
+}
+
+.preamp-scale i::after {
+  content: "";
+  width: 7px;
+  height: 1px;
+  background: rgb(255 255 255 / 0.2);
+}
+
+.preamp-scale i.is-zero {
+  color: var(--label-2);
+}
+
+.preamp-scale i.is-zero::after {
+  width: 10px;
+  background: rgb(255 255 255 / 0.5);
 }
 
 .preamp input {
+  position: absolute;
+  top: 0;
+  left: calc(50% - 10px);
+  margin: 0;
   writing-mode: vertical-lr;
   direction: rtl;
   appearance: none;
@@ -538,8 +722,8 @@ button {
   height: 18px;
   margin-left: -7px;
   border-radius: 50%;
-  background: #e6e6e6;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.5), 0 0 0 0.5px rgb(0 0 0 / 0.4);
+  background: linear-gradient(#fff, #d4d4d6);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.55), 0 0 0 0.5px rgb(0 0 0 / 0.45);
 }
 
 .preamp output {
@@ -548,11 +732,23 @@ button {
   color: var(--label-2);
 }
 
-.inspector {
+.strip {
   display: grid;
   gap: 12px;
-  min-height: 92px;
+  min-height: 112px;
   align-content: start;
+  padding: 12px;
+  border-radius: var(--radius-group);
+  background: var(--fill-1);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.04);
+}
+
+.strip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 28px;
 }
 
 .chips {
@@ -568,13 +764,19 @@ button {
   display: grid;
   place-items: center;
   background: color-mix(in srgb, currentColor 18%, transparent);
+  transition: background 0.15s, scale 0.15s var(--ease-out);
   font-size: 11px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
+.chip:hover {
+  background: color-mix(in srgb, currentColor 32%, transparent);
+}
+
 .chip[aria-selected="true"] {
   background: currentColor;
+  scale: 1.12;
 }
 
 .chip[aria-selected="true"] span {
@@ -601,12 +803,13 @@ button {
 
 .page > * {
   max-width: 640px;
+  margin-inline: auto;
 }
 
 .page h2 {
   font-size: 13px;
   font-weight: 600;
-  margin: 20px 0 6px;
+  margin: 24px auto 6px;
 }
 
 .page h2:first-child {
@@ -741,6 +944,14 @@ button {
 
 .icon-button:hover:not(:disabled) {
   background: var(--fill-2);
+}
+
+.icon-button.is-danger:hover:not(:disabled) {
+  background: rgb(255 69 58 / 0.16);
+}
+
+.icon-button.is-danger:hover:not(:disabled) svg {
+  stroke: var(--red);
 }
 
 .icon-button:disabled {

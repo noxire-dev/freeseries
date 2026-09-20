@@ -10,7 +10,7 @@ const NAV: { view: View; label: string; icon: string }[] = [
   { view: "equalizer", label: "Equalizer", icon: "M4 7h9m4 0h3M4 17h3m4 0h9M15 4.5v5M9 14.5v5" },
   { view: "presets", label: "Presets", icon: "M5 6h14M5 12h14M5 18h9" },
   { view: "devices", label: "Devices", icon: "M5 18v-5a7 7 0 0 1 14 0v5M5 14.5h2.5v5H5zM16.5 14.5H19v5h-2.5z" },
-  { view: "settings", label: "Settings", icon: "M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zM12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8" },
+  { view: "settings", label: "Settings", icon: "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z" },
   { view: "log", label: "Log", icon: "M7 4h10a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM9 9h6M9 13h6M9 17h3" },
 ];
 
@@ -100,6 +100,13 @@ export default function App(p: {
     <div className="window">
       <aside className="sidebar" data-tauri-drag-region>
         <h1 className="brand" data-tauri-drag-region>
+          <svg className="brand-mark" viewBox="0 0 28 28" aria-hidden="true">
+            <rect width="28" height="28" rx="7" />
+            <path d="M4.5 15.5c1.8 0 2.5-5.2 4.6-5.2s3 7.4 5.4 7.4 2.9-9 5.3-9 2.9 6.8 4.7 6.8" />
+            <circle cx="9.1" cy="10.3" r="1.9" fill="#ff453a" />
+            <circle cx="14.5" cy="17.7" r="1.9" fill="#ffd60a" />
+            <circle cx="19.8" cy="8.7" r="1.9" fill="#0a84ff" />
+          </svg>
           freeseries
           {import.meta.env.DEV && <small>dev</small>}
         </h1>
@@ -165,7 +172,13 @@ export default function App(p: {
 
         {view === "equalizer" &&
           (editing ? (
-            <Equalizer preset={editing.preset} bypass={bypass} onPreset={applyPreset} />
+            <Equalizer
+              preset={editing.preset}
+              bypass={bypass}
+              morphKey={`${editing.id}|${editing.presetName.replace(/ \(edited\)$/, "")}`}
+              onPreset={applyPreset}
+              onBrowsePresets={() => setView("presets")}
+            />
           ) : (
             <div className="page">
               <p className="hint">Add the headphones or speakers you listen on, then come back to tune them.</p>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AutoEqApi, AutoEqEntry, Band, Device, Kind, LogEntry, Preset, StartupApi, Status } from "./api";
 import EqGraph, { bandColor } from "./EqGraph";
 import { DB_RANGE, F_MAX, F_MIN, clamp, formatDb, frequencies, totalGainDb } from "./eqmath";
@@ -31,11 +31,95 @@ function NumberField(p: { label: string; unit: string; value: number; min: numbe
   );
 }
 
-export function Equalizer(p: { preset: Preset; bypass: boolean; onPreset(preset: Preset): void }) {
+const PREAMP_TICKS = [18, 12, 6, 0, -6, -12, -18];
+const MORPH_MS = 360;
+
+const mix = (a: number, b: number, t: number) => a + (b - a) * t;
+const mixLog = (a: number, b: number, t: number) => Math.exp(mix(Math.log(a), Math.log(b), t));
+
+/** Blend between two presets. A band that exists on one side only grows from, or shrinks to, 0 dB. */
+function blend(from: Preset, to: Preset, t: number): Preset {
+  const count = Math.max(from.bands.length, to.bands.length);
+  const bands = Array.from({ length: count }, (_, i): Band => {
+    const a = from.bands[i] ?? { ...to.bands[i], gainDb: 0 };
+    const b = to.bands[i] ?? { ...from.bands[i], gainDb: 0 };
+    return { kind: b.kind, fc: mixLog(a.fc, b.fc, t), gainDb: mix(a.gainDb, b.gainDb, t), q: mixLog(a.q, b.q, t) };
+  });
+  return { preampDb: mix(from.preampDb, to.preampDb, t), bands };
+}
+
+/**
+ * What the graph draws. Follows `preset` instantly while the user edits, but when `key` changes
+ * (another preset or another output was loaded) the curve travels there, so the change is visible.
+ */
+function useMorph(preset: Preset, key: string): { shown: Preset; morphing: boolean } {
+  const [shown, setShown] = useState(preset);
+  const [morphing, setMorphing] = useState(false);
+  const state = useRef({ key, shown: preset });
+  state.current.shown = shown;
+
+  useEffect(() => {
+    const still = key === state.current.key || matchMedia("(prefers-reduced-motion: reduce)").matches;
+    state.current.key = key;
+    if (still) {
+      setShown(preset);
+      return;
+    }
+    const from = state.current.shown;
+    const began = performance.now();
+    let frame = 0;
+    setMorphing(true);
+    const step = (now: number) => {
+      const t = Math.min(1, (now - began) / MORPH_MS);
+      if (t < 1) {
+        setShown(blend(from, preset, 1 - 2 ** (-10 * t))); // exponential ease-out
+        frame = requestAnimationFrame(step);
+      } else {
+        setShown(preset);
+        setMorphing(false);
+      }
+    };
+    frame = requestAnimationFrame(step);
+    // A hidden window (freeseries lives in the tray) gets no animation frames, and the engine can
+    // switch outputs while it's hidden. The timer makes sure the morph always ends.
+    const deadline = setTimeout(() => {
+      cancelAnimationFrame(frame);
+      setShown(preset);
+      setMorphing(false);
+    }, MORPH_MS + 80);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(deadline);
+      setMorphing(false);
+    };
+  }, [preset, key]);
+
+  return { shown, morphing };
+}
+
+/** The middle (on a log scale) of the widest stretch of spectrum that has no band yet. */
+function emptiestFrequency(bands: Band[]): number {
+  const marks = [F_MIN, ...bands.map((b) => b.fc).sort((a, b) => a - b), F_MAX];
+  let best = { ratio: 0, fc: 1000 };
+  for (let i = 1; i < marks.length; i++) {
+    const ratio = marks[i] / marks[i - 1];
+    if (ratio > best.ratio) best = { ratio, fc: Math.round(Math.sqrt(marks[i] * marks[i - 1])) };
+  }
+  return bands.length ? best.fc : 1000;
+}
+
+export function Equalizer(p: { preset: Preset; bypass: boolean; morphKey: string; onPreset(preset: Preset): void; onBrowsePresets(): void }) {
   const { preset, onPreset } = p;
   const [selected, setSelected] = useState<number | null>(null);
+  const { shown, morphing } = useMorph(preset, p.morphKey);
+  useEffect(() => setSelected(null), [p.morphKey]);
+
   const band = selected !== null ? preset.bands[selected] : undefined;
   const setBand = (i: number, b: Band) => onPreset({ ...preset, bands: preset.bands.map((old, j) => (j === i ? b : old)) });
+  const add = (b: Band) => {
+    onPreset({ ...preset, bands: [...preset.bands, b] });
+    setSelected(preset.bands.length);
+  };
   const remove = (i: number) => {
     onPreset({ ...preset, bands: preset.bands.filter((_, j) => j !== i) });
     setSelected(null);
@@ -47,51 +131,77 @@ export function Equalizer(p: { preset: Preset; bypass: boolean; onPreset(preset:
     <div className="eq">
       <div className="eq-stage">
         <EqGraph
-          preset={preset}
+          preset={morphing ? shown : preset}
           selected={selected}
           bypass={p.bypass}
+          interactive={!morphing}
           onSelect={setSelected}
           onChange={setBand}
           onRemove={remove}
-          onAdd={(b) => {
-            onPreset({ ...preset, bands: [...preset.bands, b] });
-            setSelected(preset.bands.length);
-          }}
+          onAdd={add}
         />
+        {preset.bands.length === 0 && !morphing && (
+          <div className="graph-empty">
+            <p>Flat. Nothing is being changed yet.</p>
+            <div>
+              <button className="button button-primary" onClick={() => add({ kind: "peak", fc: 1000, gainDb: 3, q: 1.41 })}>
+                Add a band
+              </button>
+              <button className="button" onClick={p.onBrowsePresets}>
+                Find a preset for your headphones
+              </button>
+            </div>
+          </div>
+        )}
         <label className="preamp">
           <span className="field-label">Preamp</span>
-          <input
-            type="range"
-            min={-DB_RANGE}
-            max={DB_RANGE}
-            step={0.1}
-            value={preset.preampDb}
-            onChange={(e) => onPreset({ ...preset, preampDb: e.target.valueAsNumber })}
-            onDoubleClick={() => onPreset({ ...preset, preampDb: 0 })}
-          />
+          <span className="preamp-track">
+            <span className="preamp-scale" aria-hidden="true">
+              {PREAMP_TICKS.map((db) => (
+                <i key={db} className={db === 0 ? "is-zero" : ""} style={{ top: `${((DB_RANGE - db) / (2 * DB_RANGE)) * 100}%` }}>
+                  <b>{db === 0 ? "0" : Math.abs(db) === 12 ? (db > 0 ? "+12" : "−12") : ""}</b>
+                </i>
+              ))}
+            </span>
+            <input
+              type="range"
+              min={-DB_RANGE}
+              max={DB_RANGE}
+              step={0.1}
+              value={preset.preampDb}
+              onChange={(e) => onPreset({ ...preset, preampDb: e.target.valueAsNumber })}
+              onDoubleClick={() => onPreset({ ...preset, preampDb: 0 })}
+              title="Double-click to reset"
+            />
+          </span>
           <output>{formatDb(preset.preampDb)}</output>
         </label>
       </div>
 
       {/* Always takes its row, so the graph doesn't resize under the pointer mid-drag. */}
       <div className="eq-notice">
-      {peak > 0.05 && (
-        <p className="notice">
-          Loudest point is {formatDb(peak)} above full scale, so loud passages can clip.
-          <button className="link" onClick={() => onPreset({ ...preset, preampDb: Math.round((preset.preampDb - peak) * 10) / 10 })}>
-            Lower preamp to {formatDb(preset.preampDb - peak)}
-          </button>
-        </p>
-      )}
+        {peak > 0.05 && (
+          <p className="notice">
+            Loudest point is {formatDb(peak)} above full scale, so loud passages can clip.
+            <button className="link" onClick={() => onPreset({ ...preset, preampDb: Math.round((preset.preampDb - peak) * 10) / 10 })}>
+              Lower preamp to {formatDb(preset.preampDb - peak)}
+            </button>
+          </p>
+        )}
       </div>
 
-      <div className="inspector">
-        <div className="chips" role="tablist" aria-label="Bands">
-          {preset.bands.map((_, i) => (
-            <button key={i} role="tab" aria-selected={selected === i} className="chip" style={{ color: bandColor(i) }} onClick={() => setSelected(i)}>
-              <span>{i + 1}</span>
-            </button>
-          ))}
+      <div className="strip">
+        <div className="strip-head">
+          <div className="chips" role="tablist" aria-label="Bands">
+            {preset.bands.map((_, i) => (
+              <button key={i} role="tab" aria-selected={selected === i} className="chip" style={{ color: bandColor(i) }} onClick={() => setSelected(i)}>
+                <span>{i + 1}</span>
+              </button>
+            ))}
+          </div>
+          <button className="button" onClick={() => add({ kind: "peak", fc: emptiestFrequency(preset.bands), gainDb: 0, q: 1.41 })}>
+            Add band
+          </button>
         </div>
         {band && selected !== null ? (
           <div className="band">
@@ -104,7 +214,7 @@ export function Equalizer(p: { preset: Preset; bypass: boolean; onPreset(preset:
             </div>
             <NumberField label="Frequency" unit="Hz" value={band.fc} min={F_MIN} max={F_MAX} step={1} onChange={(fc) => setBand(selected, { ...band, fc })} />
             <NumberField label="Gain" unit="dB" value={band.gainDb} min={-DB_RANGE} max={DB_RANGE} step={0.1} onChange={(gainDb) => setBand(selected, { ...band, gainDb })} />
-            <NumberField label="Q" unit="" value={band.q} min={0.1} max={10} step={0.01} onChange={(q) => setBand(selected, { ...band, q })} />
+            <NumberField label="Width (Q)" unit="" value={band.q} min={0.1} max={10} step={0.01} onChange={(q) => setBand(selected, { ...band, q })} />
             <button className="button button-quiet" onClick={() => remove(selected)}>
               Remove band
             </button>
@@ -112,8 +222,8 @@ export function Equalizer(p: { preset: Preset; bypass: boolean; onPreset(preset:
         ) : (
           <p className="hint">
             {preset.bands.length
-              ? "Select a band to edit it. Drag to move, scroll over it to change its width, double-click it to remove."
-              : "Double-click the graph to add your first band, or load a preset for your headphones."}
+              ? "Select a band to edit it. Drag it to move, scroll over it to change its width, double-click it to remove. Double-click empty space to add one there."
+              : "Bands you add show up here."}
           </p>
         )}
       </div>
@@ -172,8 +282,8 @@ export function Presets(p: {
               {named.preset.bands.length} {named.preset.bands.length === 1 ? "band" : "bands"}
             </span>
             {p.current === named.name ? <span className="row-detail">In use</span> : <button className="link" onClick={() => p.onLoad(named)}>Use</button>}
-            <button className="link link-danger" onClick={() => p.onDelete(named.name)}>
-              Delete
+            <button className="icon-button is-danger" onClick={() => p.onDelete(named.name)} aria-label={`Delete ${named.name}`} title="Delete">
+              <svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" /></svg>
             </button>
           </li>
         ))}
@@ -334,8 +444,8 @@ export function Devices(p: {
               <button className="icon-button" onClick={() => move(i, i + 1)} disabled={i === p.outputs.length - 1} aria-label={`Move ${o.name} down`} title="Prefer this one less">
                 <svg viewBox="0 0 12 12"><path d="M2.5 4.5 6 8l3.5-3.5" /></svg>
               </button>
-              <button className="link link-danger" onClick={() => p.onOutputs(p.outputs.filter((x) => x.id !== o.id))}>
-                Remove
+              <button className="icon-button is-danger" onClick={() => p.onOutputs(p.outputs.filter((x) => x.id !== o.id))} aria-label={`Remove ${o.name}`} title="Remove">
+                <svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" /></svg>
               </button>
             </li>
           ))}

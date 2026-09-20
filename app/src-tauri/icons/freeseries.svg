@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a3a3c"/>
+      <stop offset="1" stop-color="#161618"/>
+    </linearGradient>
+    <linearGradient id="fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <!-- App tile: the macOS-style rounded square, inset so the shape has room on every platform -->
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#tile)"/>
+  <rect x="66" y="66" width="892" height="892" rx="198" fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="4"/>
+  <!-- Zero line -->
+  <path d="M176 560H848" stroke="#ffffff" stroke-opacity="0.18" stroke-width="10" stroke-linecap="round"/>
+  <!-- The EQ curve: a bass lift, a mid cut, a presence peak -->
+  <path d="M176 560C236 560 262 388 330 388S430 650 512 650 610 330 694 330 790 560 848 560V760H176Z" fill="url(#fill)"/>
+  <path d="M176 560C236 560 262 388 330 388S430 650 512 650 610 330 694 330 790 560 848 560" fill="none" stroke="#ffffff" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Band handles, in the app's band hues -->
+  <circle cx="330" cy="388" r="50" fill="#ff453a" stroke="#1c1c1e" stroke-width="14"/>
+  <circle cx="512" cy="650" r="50" fill="#ffd60a" stroke="#1c1c1e" stroke-width="14"/>
+  <circle cx="694" cy="330" r="50" fill="#0a84ff" stroke="#1c1c1e" stroke-width="14"/>
+</svg>
