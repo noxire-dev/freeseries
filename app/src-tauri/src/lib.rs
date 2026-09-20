@@ -99,11 +99,13 @@ fn set_starts_with_windows(app: State<App>, enabled: bool) -> Result<(), String>
 }
 
 fn tray(app: &tauri::App) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "Open freeseries", true, None::<&str>)?;
+    // "freeseries", or "freeseries dev" for a development build running next to the installed app.
+    let name = app.config().product_name.clone().unwrap_or_else(|| "freeseries".into());
+    let open = MenuItem::with_id(app, "open", format!("Open {name}"), true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit (stops audio processing)", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &PredefinedMenuItem::separator(app)?, &quit])?;
     let mut tray = TrayIconBuilder::new()
-        .tooltip("freeseries")
+        .tooltip(&name)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
