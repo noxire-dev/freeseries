@@ -272,8 +272,10 @@ export default function App(p: {
         {view === "mixer" && (
           <Mixer
             apps={p.apps}
+            levels={engine.levels}
+            presets={sounds}
+            output={editing && { name: nameOf(activeId ?? editing.id), sound: editing.presetName, playing: activeId !== undefined }}
             channels={channels.map((c) => ({ key: c.key, label: c.label, deviceId: c.device.id, device: c.device.name.replace(/ \(.*\)$/, ""), ...(mixer[c.key] ?? DEFAULT_CHANNEL) }))} // the name to look for in an app's device list
-            sounds={sounds.map((n) => n.name)}
             balance={balance}
             setup={p.setup}
             onBalance={setBalance}

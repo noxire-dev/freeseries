@@ -28,7 +28,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         use freeseries::routing::{AppRouting, WindowsRouting};
         for app in WindowsRouting.apps()? {
             let pinned = app.device.as_ref().map(|id| devices.iter().find(|d| &d.id == id).map_or(id.clone(), |d| d.name.clone()));
-            println!("{:>6}  {:<28} {}", app.pid, app.name, pinned.unwrap_or_else(|| "(default device)".into()));
+            let icon = WindowsRouting.icon(&app.path).map_or("no icon".to_string(), |i| format!("{}x{} icon, {} visible px", i.width, i.height, i.rgba.chunks_exact(4).filter(|p| p[3] > 0).count()));
+            println!("{:>6}  {:<26} {:<24} {}", app.pid, app.name, icon, pinned.unwrap_or_else(|| "(default device)".into()));
         }
         return Ok(());
     }

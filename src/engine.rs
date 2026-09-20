@@ -145,15 +145,33 @@ impl PresetCell {
     }
 }
 
+/// The loudest sample since someone last looked: what a level meter shows.
+#[derive(Default)]
+pub struct PeakMeter(AtomicU32);
+
+impl PeakMeter {
+    /// For the audio callback. Lock-free: for non-negative floats, the larger value has the larger bit pattern.
+    pub fn feed(&self, samples: &[f32]) {
+        let peak = samples.iter().fold(0f32, |m, s| m.max(s.abs()));
+        self.0.fetch_max(peak.to_bits(), Relaxed);
+    }
+
+    /// The peak since the last call, linear (1.0 is full scale), and starts over.
+    pub fn take(&self) -> f32 {
+        f32::from_bits(self.0.swap(0, Relaxed))
+    }
+}
+
 /// One channel's settings, shared with its capture callback.
 pub struct ChannelDsp {
     pub eq: PresetCell,
     volume: AtomicU32,
+    pub meter: PeakMeter,
 }
 
 impl Default for ChannelDsp {
     fn default() -> Self {
-        ChannelDsp { eq: PresetCell::default(), volume: AtomicU32::new(1f32.to_bits()) }
+        ChannelDsp { eq: PresetCell::default(), volume: AtomicU32::new(1f32.to_bits()), meter: PeakMeter::default() }
     }
 }
 
@@ -175,6 +193,8 @@ pub struct Dsp {
     bypass: AtomicBool,
     analysing: AtomicBool,
     tap: Mutex<Tap>,
+    /// The finished mix, after the output EQ and the limiter.
+    pub meter: PeakMeter,
     channels: Mutex<HashMap<String, Arc<ChannelDsp>>>,
 }
 
@@ -182,6 +202,13 @@ impl Dsp {
     /// The settings of one channel, created on first use.
     pub fn channel(&self, id: &str) -> Arc<ChannelDsp> {
         self.channels.lock().unwrap().entry(id.to_string()).or_default().clone()
+    }
+
+    /// Peak level per channel since the last call, for the mixer's meters. "out" is the finished mix.
+    pub fn levels(&self) -> HashMap<String, f32> {
+        let mut levels: HashMap<String, f32> = self.channels.lock().unwrap().iter().map(|(id, c)| (id.clone(), c.meter.take())).collect();
+        levels.insert("out".into(), self.meter.take());
+        levels
     }
 
     pub fn set_bypass(&self, bypass: bool) {
@@ -385,6 +412,17 @@ impl Drop for Engine {
 mod tests {
     use super::*;
     use crate::eq::{Band, Kind};
+
+    #[test]
+    fn meters_report_the_loudest_sample_once() {
+        let dsp = Dsp::default();
+        dsp.channel("chat").meter.feed(&[0.1, -0.7, 0.3]);
+        dsp.channel("chat").meter.feed(&[0.2]);
+        dsp.meter.feed(&[-0.25]);
+        let levels = dsp.levels();
+        assert_eq!((levels["chat"], levels["out"]), (0.7, 0.25));
+        assert_eq!(dsp.levels()["chat"], 0.0, "reading a meter starts it over");
+    }
     use std::collections::{HashSet, VecDeque};
     use std::time::Instant;
 

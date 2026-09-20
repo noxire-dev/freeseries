@@ -28,11 +28,21 @@ pub struct AudioApp {
     pub device: Option<String>,
 }
 
+/// An app's icon as raw pixels, ready for a canvas: `width * height * 4` bytes of RGBA.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct Icon {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
 pub trait AppRouting: Send + Sync {
     /// Every app that has an audio session on a playback device right now.
     fn apps(&self) -> Result<Vec<AudioApp>, String>;
     /// Pins an app to a device (`DeviceInfo::id`), or with `None` lets it follow the default again.
     fn assign(&self, pid: u32, device: Option<&str>) -> Result<(), String>;
+    /// The icon Windows shows for that executable. `None` if it has none we can read.
+    fn icon(&self, path: &str) -> Option<Icon>;
 }
 
 pub struct WindowsRouting;
@@ -155,6 +165,10 @@ impl AppRouting for WindowsRouting {
         }
         Ok(())
     }
+
+    fn icon(&self, path: &str) -> Option<Icon> {
+        icon_of(path)
+    }
 }
 
 fn pinned_device(policy: &Policy, pid: u32) -> Option<String> {
@@ -167,5 +181,59 @@ fn pinned_device(policy: &Policy, pid: u32) -> Option<String> {
         let id = id.strip_prefix(MMDEVAPI).unwrap_or(&id);
         let id = id.strip_suffix(RENDER_INTERFACE).unwrap_or(id);
         (!id.is_empty()).then(|| format!("{DEVICE_ID_PREFIX}{id}"))
+    }
+}
+
+/// The shell's large (32 px) icon for a file, read out of GDI as top-down RGBA.
+fn icon_of(path: &str) -> Option<Icon> {
+    use windows::Win32::Graphics::Gdi::{DeleteObject, GetDC, GetDIBits, GetObjectW, ReleaseDC, BITMAP, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS};
+    use windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES;
+    use windows::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON};
+    use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, ICONINFO};
+
+    unsafe {
+        let mut info = SHFILEINFOW::default();
+        let found = SHGetFileInfoW(&HSTRING::from(path), FILE_FLAGS_AND_ATTRIBUTES(0), Some(&mut info), size_of::<SHFILEINFOW>() as u32, SHGFI_ICON | SHGFI_LARGEICON);
+        if found == 0 || info.hIcon.is_invalid() {
+            return None;
+        }
+        let mut parts = ICONINFO::default();
+        let pixels = (|| {
+            GetIconInfo(info.hIcon, &mut parts).ok()?;
+            let mut shape = BITMAP::default();
+            if GetObjectW(parts.hbmColor.into(), size_of::<BITMAP>() as i32, Some(&mut shape as *mut _ as *mut c_void)) == 0 {
+                return None;
+            }
+            let (width, height) = (shape.bmWidth as u32, shape.bmHeight as u32);
+            let mut header = BITMAPINFO {
+                // A negative height asks for the rows top-down, the order a canvas wants.
+                bmiHeader: BITMAPINFOHEADER { biSize: size_of::<BITMAPINFOHEADER>() as u32, biWidth: width as i32, biHeight: -(height as i32), biPlanes: 1, biBitCount: 32, biCompression: BI_RGB.0, ..Default::default() },
+                ..Default::default()
+            };
+            let mut bgra = vec![0u8; (width * height * 4) as usize];
+            let screen = GetDC(None);
+            let rows = GetDIBits(screen, parts.hbmColor, 0, height, Some(bgra.as_mut_ptr() as *mut c_void), &mut header, DIB_RGB_COLORS);
+            ReleaseDC(None, screen);
+            if rows == 0 {
+                return None;
+            }
+            // Icons from before Windows XP carry no alpha channel at all: every pixel reads transparent.
+            let opaque = bgra.chunks_exact(4).all(|p| p[3] == 0);
+            for p in bgra.chunks_exact_mut(4) {
+                p.swap(0, 2);
+                if opaque {
+                    p[3] = 255;
+                }
+            }
+            Some(Icon { width, height, rgba: bgra })
+        })();
+        if !parts.hbmColor.is_invalid() {
+            let _ = DeleteObject(parts.hbmColor.into());
+        }
+        if !parts.hbmMask.is_invalid() {
+            let _ = DeleteObject(parts.hbmMask.into());
+        }
+        let _ = DestroyIcon(info.hIcon);
+        pixels
     }
 }

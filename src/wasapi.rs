@@ -148,6 +148,7 @@ fn open(mix: &Mix, dsp: Arc<Dsp>, on_lost: Arc<dyn Fn() + Send + Sync>) -> Resul
                 if volume != 1.0 {
                     scratch.iter_mut().for_each(|s| *s *= volume);
                 }
+                channel.meter.feed(&scratch);
                 let mut q = queue.lock().unwrap();
                 q.extend(scratch.iter());
                 let excess = q.len().saturating_sub(max_queued);
@@ -216,6 +217,7 @@ fn open(mix: &Mix, dsp: Arc<Dsp>, on_lost: Arc<dyn Fn() + Send + Sync>) -> Resul
                 master.process(data);
                 limit(data);
             }
+            dsp.meter.feed(data);
             dsp.tap(data, out_ch, rate as f32);
         },
         on_error("playback".into()),

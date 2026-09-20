@@ -26,6 +26,8 @@ export interface EngineApi {
   setAnalysing(on: boolean): Promise<void>;
   /** dBFS per log-spaced band from 20 Hz to 20 kHz of what is playing, or null while the analyser is off. */
   spectrum(bands: number): Promise<number[] | null>;
+  /** Peak level per channel key, and "out" for the mix, since the last call. Linear: 1 is full scale. */
+  levels(): Promise<Record<string, number>>;
   parsePreset(text: string): Promise<Preset>;
 }
 
@@ -63,6 +65,9 @@ export interface HotkeyApi {
 }
 
 /** An app with an audio session. `device` is where it is pinned; null means it follows the Windows default. */
+/** Raw pixels of an app icon: `width * height * 4` RGBA bytes. */
+export interface Icon { width: number; height: number; rgba: number[] }
+
 export interface AudioApp { pid: number; name: string; path: string; device: string | null }
 
 /** Which app plays into which device: the per-app output setting of the Windows volume mixer. */
@@ -70,6 +75,8 @@ export interface AppsApi {
   list(): Promise<AudioApp[]>;
   /** Pins an app to a device; `null` lets it follow the default again. Windows remembers it per app. */
   assign(pid: number, device: string | null): Promise<void>;
+  /** The icon Windows shows for that executable, or null. */
+  icon(path: string): Promise<Icon | null>;
 }
 
 export interface StartupApi {
@@ -136,6 +143,7 @@ export async function tauriEngine(): Promise<EngineApi> {
     setBypass: (bypass) => invoke("set_bypass", { bypass }),
     setAnalysing: (on) => invoke("set_analysing", { on }),
     spectrum: (bands) => invoke("spectrum", { bands }),
+    levels: () => invoke("levels"),
     parsePreset: (text) => invoke("parse_preset", { text }),
   };
 }
@@ -167,7 +175,7 @@ export async function tauriHotkeys(): Promise<HotkeyApi> {
 
 export async function tauriApps(): Promise<AppsApi> {
   const { invoke } = await import("@tauri-apps/api/core");
-  return { list: () => invoke("audio_apps"), assign: (pid, device) => invoke("assign_app", { pid, device }) };
+  return { list: () => invoke("audio_apps"), assign: (pid, device) => invoke("assign_app", { pid, device }), icon: (path) => invoke("app_icon", { path }) };
 }
 
 export async function tauriStartup(): Promise<StartupApi> {
@@ -233,6 +241,14 @@ export function mockEngine(): EngineApi {
     setPreset: async () => {},
     setBypass: async (bypass) => void (state = { ...state, bypass }),
     setAnalysing: async () => {},
+    // Something that moves like a game, a voice and the two together.
+    levels: async (): Promise<Record<string, number>> => {
+      if (state.status.state !== "running") return {};
+      const t = performance.now() / 1000;
+      const main = 0.35 + 0.25 * Math.abs(Math.sin(t * 5.3)) * Math.abs(Math.sin(t * 0.9));
+      const chat = Math.sin(t * 0.6) > 0 ? 0.12 + 0.2 * Math.abs(Math.sin(t * 9)) : 0.002;
+      return { main, chat, media: 0, out: Math.min(1, main + chat) };
+    },
     // Something that moves like music: a pink-ish slope, a bass pulse, a wandering presence bump.
     spectrum: async (bands) => {
       if (state.status.state !== "running") return null;
@@ -274,7 +290,7 @@ export function mockApps(): AppsApi {
     { pid: 301, name: "Spotify", path: "", device: null },
     { pid: 401, name: "VALORANT-Win64-Shipping", path: "", device: null },
   ];
-  return { list: async () => apps.map((a) => ({ ...a })), assign: async (pid, device) => void (apps.find((a) => a.pid === pid)!.device = device) };
+  return { list: async () => apps.map((a) => ({ ...a })), assign: async (pid, device) => void (apps.find((a) => a.pid === pid)!.device = device), icon: async () => null };
 }
 
 export const mockLog = (): LogApi => ({

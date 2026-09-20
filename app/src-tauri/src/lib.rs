@@ -6,7 +6,7 @@ use setup::{ScriptSetup, Setup};
 use freeseries::arctis::ArctisNovaPro;
 use freeseries::engine::{AudioBackend, DeviceInfo, Engine, Plan, Status};
 use freeseries::eq::Preset;
-use freeseries::routing::{AppRouting, AudioApp, WindowsRouting};
+use freeseries::routing::{AppRouting, AudioApp, Icon, WindowsRouting};
 use freeseries::wasapi::Wasapi;
 use std::os::windows::process::CommandExt;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -104,6 +104,18 @@ fn add_channel_device(setup: State<Box<dyn Setup>>) -> Result<Vec<String>, Strin
 #[tauri::command(async)]
 fn audio_apps(routing: State<Box<dyn AppRouting>>) -> Result<Vec<AudioApp>, String> {
     routing.apps()
+}
+
+/// The icon Windows shows for an executable, as raw RGBA for a canvas.
+#[tauri::command(async)]
+fn app_icon(routing: State<Box<dyn AppRouting>>, path: String) -> Option<Icon> {
+    routing.icon(&path)
+}
+
+/// Peak level per channel (and "out" for the mix) since the last call, linear, 1.0 = full scale.
+#[tauri::command]
+fn levels(app: State<App>) -> std::collections::HashMap<String, f32> {
+    app.engine.dsp.levels()
 }
 
 /// Pins an app to a device, or with no device lets it follow the Windows default again.
@@ -277,6 +289,8 @@ pub fn run() {
             name_device,
             add_channel_device,
             audio_apps,
+            app_icon,
+            levels,
             assign_app,
             open_sound_settings,
             about,
