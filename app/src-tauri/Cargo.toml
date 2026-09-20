@@ -1,6 +1,6 @@
 [package]
 name = "freeseries-app"
-version = "0.1.0"
+version = "0.1.1"
 description = "EQ for the spatial sound you already own"
 edition = "2021"
 
@@ -24,7 +24,6 @@ serde_json = "1"
 freeseries = { path = "../.." }
 tauri-plugin-log = "2"
 log = "0.4.34"
-tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
 
 

@@ -1,16 +1,20 @@
+mod autostart;
+
+use autostart::{Autostart, TaskScheduler};
 use freeseries::engine::{AudioBackend, DeviceInfo, Engine, Route, Status};
 use freeseries::eq::Preset;
 use freeseries::wasapi::Wasapi;
+use std::os::windows::process::CommandExt;
 use std::sync::Mutex;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Manager, State, WindowEvent};
-use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 use tauri_plugin_opener::OpenerExt;
 
 struct App {
     engine: Engine,
+    autostart: Box<dyn Autostart>,
     route: Mutex<Option<Route>>,
 }
 
@@ -80,18 +84,23 @@ fn show_main(app: &tauri::AppHandle) {
 }
 
 #[tauri::command]
-fn starts_with_windows(app: tauri::AppHandle) -> Result<bool, String> {
-    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+fn starts_with_windows(app: State<App>) -> Result<bool, String> {
+    app.autostart.is_enabled()
 }
 
 #[tauri::command]
-fn set_starts_with_windows(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+fn set_starts_with_windows(app: State<App>, enabled: bool) -> Result<(), String> {
     // A dev build would register target\debug\...exe, which needs the Vite server and breaks at boot.
     if cfg!(debug_assertions) {
         return Err("Start with Windows only works in the installed app, not in a development build.".into());
     }
-    let auto = app.autolaunch();
-    if enabled { auto.enable() } else { auto.disable() }.map_err(|e| e.to_string())
+    app.autostart.set_enabled(enabled)?;
+    // 0.1.0 registered a Run-key entry instead; left behind it would launch a second time, late.
+    let _ = std::process::Command::new("reg.exe")
+        .args(["delete", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run", "/v", "freeseries", "/f"])
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+        .output();
+    Ok(())
 }
 
 fn tray(app: &tauri::App) -> tauri::Result<()> {
@@ -123,8 +132,12 @@ fn tray(app: &tauri::App) -> tauri::Result<()> {
 pub fn run() {
     tauri::Builder::default()
         // Must be first. A second copy would run a second engine and double the audio.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
-        .plugin(tauri_plugin_autostart::Builder::new().args([MINIMIZED]).build())
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // A refused boot launch must not pop the window open.
+            if !args.iter().any(|a| a == MINIMIZED) {
+                show_main(app);
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_log::Builder::new()
@@ -139,7 +152,7 @@ pub fn run() {
                 .rotation_strategy(RotationStrategy::KeepSome(3))
                 .build(),
         )
-        .manage(App { engine: Engine::start(Wasapi), route: Mutex::new(None) })
+        .manage(App { engine: Engine::start(Wasapi), autostart: Box::new(TaskScheduler { task: "freeseries", args: MINIMIZED }), route: Mutex::new(None) })
         .invoke_handler(tauri::generate_handler![
             list_outputs,
             snapshot,
