@@ -107,6 +107,7 @@ fn coeffs(band: Band, sample_rate: f64) -> Coeffs {
 /// Stateful EQ over interleaved f32 frames.
 pub struct Eq {
     channels: usize,
+    sample_rate: f64,
     preamp: f64,
     coeffs: Vec<Coeffs>,
     /// Transposed direct form II state, indexed `[band * channels + channel]`.
@@ -115,12 +116,18 @@ pub struct Eq {
 
 impl Eq {
     pub fn new(preset: &Preset, sample_rate: f64, channels: usize) -> Self {
-        let coeffs: Vec<_> = preset.bands.iter().map(|&b| coeffs(b, sample_rate)).collect();
-        Eq {
-            channels,
-            preamp: 10f64.powf(preset.preamp_db / 20.0),
-            state: vec![[0.0; 2]; coeffs.len() * channels],
-            coeffs,
+        let mut eq = Eq { channels, sample_rate, preamp: 1.0, coeffs: Vec::new(), state: Vec::new() };
+        eq.retune(preset);
+        eq
+    }
+
+    /// Applies new settings while audio runs. Filter state survives as long as the band count
+    /// doesn't change, so dragging a band doesn't click.
+    pub fn retune(&mut self, preset: &Preset) {
+        self.preamp = 10f64.powf(preset.preamp_db / 20.0);
+        self.coeffs = preset.bands.iter().map(|&b| coeffs(b, self.sample_rate)).collect();
+        if self.state.len() != self.coeffs.len() * self.channels {
+            self.state = vec![[0.0; 2]; self.coeffs.len() * self.channels];
         }
     }
 
