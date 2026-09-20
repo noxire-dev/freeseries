@@ -26,6 +26,7 @@ freeseries = { path = "../.." }
 tauri-plugin-log = "2"
 log = "0.4.34"
 tauri-plugin-single-instance = "2"
+tauri-plugin-global-shortcut = "2"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

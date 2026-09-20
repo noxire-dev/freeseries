@@ -610,7 +610,17 @@ export function Log(p: { entries: (LogEntry & { time: string })[]; onOpenFolder(
   );
 }
 
-export function Settings(p: { startup: StartupApi; info: InfoApi; problems: number; onSetup(): void; onLog(): void; onOpenLogFolder(): void }) {
+export function Settings(p: {
+  startup: StartupApi;
+  info: InfoApi;
+  problems: number;
+  hotkeys: boolean;
+  refusedHotkeys: string[];
+  onHotkeys(enabled: boolean): void;
+  onSetup(): void;
+  onLog(): void;
+  onOpenLogFolder(): void;
+}) {
   const [enabled, setEnabled] = useState(false);
   const [about, setAbout] = useState<About>();
   useEffect(() => void p.info.about().then(setAbout, () => {}), [p.info]);
@@ -642,6 +652,27 @@ export function Settings(p: { startup: StartupApi; info: InfoApi; problems: numb
       </ul>
       <p className="hint hint-below">Starts in the tray and picks up your devices and EQ from last time, so your audio works before you open anything.</p>
       {error && <p className="notice">{error}</p>}
+
+      <h2>Keyboard shortcuts</h2>
+      <ul className="group">
+        <li>
+          <label className="row">
+            <span className="row-title">Work in any app, including games</span>
+            <input type="checkbox" role="switch" className="switch" checked={p.hotkeys} onChange={(e) => p.onHotkeys(e.target.checked)} />
+          </label>
+        </li>
+        {[
+          ["Next sound preset", "Ctrl+Shift+F10"],
+          ["Previous sound preset", "Ctrl+Shift+F9"],
+          ["EQ on / bypass", "Ctrl+Shift+F11"],
+        ].map(([what, keys]) => (
+          <li key={keys} className={`row${p.hotkeys ? "" : " is-unused"}`}>
+            <span className="row-title">{what}</span>
+            {p.refusedHotkeys.includes(keys) && <span className="row-detail">Taken by another app</span>}
+            <kbd>{keys}</kbd>
+          </li>
+        ))}
+      </ul>
 
       <h2>Audio device</h2>
       <ul className="group">
@@ -775,8 +806,9 @@ export function Setup(p: { setup: SetupApi; detected: Device | undefined; hasOut
           "Choose what you listen on",
           <>
             <p className="hint">
-              Pick your headphones and anything else you listen on. If you use Dolby Atmos or DTS Headphone:X, turn it on for the freeseries
-              device and off for your headphones, so it's only applied once.
+              Pick your headphones and anything else you listen on. For surround in games, turn spatial sound on for the freeseries device
+              and off for your headphones, so it's only applied once. Dolby Atmos and DTS Headphone:X work if you own them; Windows Sonic
+              for Headphones is built in and free.
             </p>
             <button className={`button${isDefault && !p.hasOutputs ? " button-primary" : ""}`} onClick={p.onDone} disabled={!installed}>
               Open Devices

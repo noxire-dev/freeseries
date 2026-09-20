@@ -10,7 +10,8 @@ use freeseries::wasapi::Wasapi;
 use std::os::windows::process::CommandExt;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{Manager, State, WindowEvent};
+use tauri::{Emitter, Manager, State, WindowEvent};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 use tauri_plugin_opener::OpenerExt;
 
@@ -95,6 +96,34 @@ fn name_device(setup: State<Box<dyn Setup>>) -> Result<Vec<String>, String> {
 #[tauri::command]
 fn open_sound_settings(app: tauri::AppHandle) -> Result<(), String> {
     app.opener().open_url("ms-settings:sound", None::<&str>).map_err(|e| e.to_string())
+}
+
+/// Work while a game has the keyboard. Ctrl+Shift+F-keys on purpose: Ctrl+Alt is AltGr on most
+/// European layouts, and plain F-keys belong to the game.
+const HOTKEYS: [(Code, &str, &str); 3] = [
+    (Code::F9, "previous-sound", "Ctrl+Shift+F9"),
+    (Code::F10, "next-sound", "Ctrl+Shift+F10"),
+    (Code::F11, "bypass", "Ctrl+Shift+F11"),
+];
+const HOTKEY_MODIFIERS: Modifiers = Modifiers::CONTROL.union(Modifiers::SHIFT);
+
+/// Turns the global shortcuts on or off. Returns the ones that couldn't be taken, usually because
+/// another program already owns them: that must never stop the app from starting.
+#[tauri::command]
+fn set_hotkeys(app: tauri::AppHandle, enabled: bool) -> Vec<&'static str> {
+    let mut refused = Vec::new();
+    for (code, _, label) in HOTKEYS {
+        let shortcut = Shortcut::new(Some(HOTKEY_MODIFIERS), code);
+        let keys = app.global_shortcut();
+        let _ = keys.unregister(shortcut);
+        if enabled {
+            if let Err(e) = keys.register(shortcut) {
+                log::warn!("shortcut {label} is not available: {e}");
+                refused.push(label);
+            }
+        }
+    }
+    refused
 }
 
 #[derive(serde::Serialize)]
@@ -187,6 +216,18 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(
+            // No shortcuts yet: the UI switches them on (set_hotkeys) once it knows the user's setting.
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        if let Some((_, action, _)) = HOTKEYS.iter().find(|(code, _, _)| shortcut.matches(HOTKEY_MODIFIERS, *code)) {
+                            let _ = app.emit("hotkey", action);
+                        }
+                    }
+                })
+                .build(),
+        )
+        .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Info)
                 .timezone_strategy(TimezoneStrategy::UseLocal)
@@ -216,7 +257,8 @@ pub fn run() {
             install_device,
             name_device,
             open_sound_settings,
-            about
+            about,
+            set_hotkeys
         ])
         .setup(|app| {
             let resources = app.path().resource_dir()?.join("resources");

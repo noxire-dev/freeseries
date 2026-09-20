@@ -26,6 +26,16 @@ Done since: a live spectrum analyser behind the curve (`src/spectrum.rs`: a tap 
 
 The EQ editor needs love and the app reads as an open-source project. Do it as a proper design pass with the `impeccable` skill, not piecemeal.
 
+## Done 2026-09-20 (second batch)
+
+- **Layered presets.** Each output has a headphone correction (AutoEq, belongs to the device) under a sound preset (what the editor edits, what you switch). The engine gets the two concatenated; the editor draws the correction as a dashed reference line.
+- **Starter sound presets** written for freeseries: Footsteps, Bass boost, Voice clarity, Late night, each with a preamp that cancels its loudest point.
+- **Import / export** in Equalizer APO `ParametricEQ.txt` text: import from a file, copy the current sound to the clipboard.
+- **Soft limiter** after the EQ (`eq::limit`): identity below -1 dBFS, bends towards full scale above it, no look-ahead so no latency.
+- **Global hotkeys**: Ctrl+Shift+F9 / F10 previous / next sound preset, Ctrl+Shift+F11 bypass. Not Ctrl+Alt (that is AltGr on European layouts). A shortcut another app already owns is reported in Settings instead of failing the launch. **Untested in the real app**: the Rust side compiles, nothing has pressed the keys yet.
+
+Still to do from the same list: switch the sound preset when a game launches (needs foreground-process watching and a rules UI), the `IAudioClient3` backend, README / updater / code signing for a public release.
+
 ## 4. Sonar preset import
 
 Let Sonar users bring their configs. Format is **unresearched**: find where GG stores Sonar configs on disk and what a shared community-config link contains, then map its filters onto our bands.

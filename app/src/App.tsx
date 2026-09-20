@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AutoEqApi, Device, EngineApi, InfoApi, LogApi, LogEntry, Preset, SetupApi, StartupApi, Status, WindowApi } from "./api";
+import type { AutoEqApi, Device, EngineApi, HotkeyApi, InfoApi, LogApi, LogEntry, Preset, SetupApi, StartupApi, Status, WindowApi } from "./api";
 import { findVirtualDevice, shortName } from "./devices";
+import { BUILTIN } from "./builtin";
 import { combine } from "./eqmath";
 import type { SavedOutput, SettingsStore } from "./store";
 import { Devices, Equalizer, Log, Presets, Settings, Setup } from "./views";
@@ -29,6 +30,7 @@ export default function App(p: {
   startup: StartupApi;
   setup: SetupApi;
   info: InfoApi;
+  hotkeys: HotkeyApi;
   autoEq: AutoEqApi;
   settings: SettingsStore;
   /** A development build sits next to the installed app, so it must not start playing by itself. */
@@ -42,6 +44,8 @@ export default function App(p: {
   const [outputs, setOutputs] = useState<SavedOutput[]>(saved.outputs);
   const [running, setRunning] = useState(saved.running && p.autoStart);
   const [autoSwitch, setAutoSwitch] = useState(saved.autoSwitch);
+  const [hotkeysOn, setHotkeysOn] = useState(saved.hotkeys);
+  const [refused, setRefused] = useState<string[]>([]);
   const [bypass, setBypass] = useState(saved.bypass);
   const [library, setLibrary] = useState(saved.library);
   const [status, setStatus] = useState<Status>({ state: "stopped" });
@@ -66,7 +70,8 @@ export default function App(p: {
     return () => clearInterval(poll);
   }, [engine]);
 
-  useEffect(() => settings.save({ source, outputs, running, autoSwitch, bypass, library }), [source, outputs, running, autoSwitch, bypass, library]);
+  useEffect(() => settings.save({ source, outputs, running, autoSwitch, hotkeys: hotkeysOn, bypass, library }), [source, outputs, running, autoSwitch, hotkeysOn, bypass, library]);
+  useEffect(() => void p.hotkeys.setEnabled(hotkeysOn).then(setRefused, () => {}), [p.hotkeys, hotkeysOn]);
 
   // The virtual device is found by name; `source` only matters when that fails and the user picked one.
   const virtual = findVirtualDevice(devices)?.id ?? source;
@@ -110,6 +115,25 @@ export default function App(p: {
     setOutputs(outputs.map((o) => (o.id === editing.id ? { ...o, correction } : o)));
     if (editing.id === activeId) engine.setPreset(combine(correction?.preset, editing.preset));
   };
+
+  // Shortcuts arrive while a game has the screen, so they act on the latest state without the
+  // subscription being torn down and rebuilt on every render.
+  const onHotkey = useRef<(action: string) => void>(() => {});
+  onHotkey.current = (action) => {
+    if (action === "bypass") {
+      setBypass(!bypass);
+      engine.setBypass(!bypass);
+    } else if (editing) {
+      const sounds = [...BUILTIN, ...library];
+      const at = sounds.findIndex((n) => n.name === editing.presetName.replace(/ \(edited\)$/, ""));
+      const next = sounds[(at + (action === "next-sound" ? 1 : sounds.length - 1)) % sounds.length];
+      applyPreset(next.preset, next.name);
+    }
+  };
+  useEffect(() => {
+    const stop = p.hotkeys.subscribe((action) => onHotkey.current(action));
+    return () => void stop.then((unsubscribe) => unsubscribe());
+  }, [p.hotkeys]);
 
   const nameOf = (id: string) => shortName(devices.find((d) => d.id === id)?.name ?? outputs.find((o) => o.id === id)?.name ?? "Unknown device");
   const statusDetail =
@@ -244,6 +268,9 @@ export default function App(p: {
             startup={p.startup}
             info={p.info}
             problems={entries.filter((e) => e.level !== "info").length}
+            hotkeys={hotkeysOn}
+            refusedHotkeys={refused}
+            onHotkeys={setHotkeysOn}
             onSetup={() => setView("setup")}
             onLog={() => setView("log")}
             onOpenLogFolder={p.log.openFolder}

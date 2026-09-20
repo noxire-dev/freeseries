@@ -21,6 +21,8 @@ export interface Saved {
   running: boolean;
   /** Move between outputs by itself. Off: only the first output is ever used. */
   autoSwitch: boolean;
+  /** Global keyboard shortcuts for bypass and switching the sound preset. */
+  hotkeys: boolean;
   bypass: boolean;
   library: NamedPreset[];
 }
@@ -30,7 +32,7 @@ export interface SettingsStore {
   save(saved: Saved): void;
 }
 
-const EMPTY: Saved = { source: null, outputs: [], running: false, autoSwitch: true, bypass: false, library: [] };
+const EMPTY: Saved = { source: null, outputs: [], running: false, autoSwitch: true, hotkeys: true, bypass: false, library: [] };
 
 /** 0.1.x stored a single route with one global preset. */
 function migrate(raw: Record<string, any>): Partial<Saved> {

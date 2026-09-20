@@ -1101,6 +1101,18 @@ a,
   margin: 0;
 }
 
+kbd {
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: var(--fill-2);
+  box-shadow: var(--raised);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--label-2);
+  white-space: nowrap;
+}
+
 .hint-below {
   margin-top: 8px;
 }

@@ -47,6 +47,15 @@ export interface InfoApi {
   about(): Promise<About>;
 }
 
+export type HotkeyAction = "previous-sound" | "next-sound" | "bypass";
+
+export interface HotkeyApi {
+  /** Turns the global shortcuts on or off. Resolves to the ones another program already owns. */
+  setEnabled(enabled: boolean): Promise<string[]>;
+  /** Calls `onAction` when a shortcut is pressed, in any app. Resolves to the unsubscribe function. */
+  subscribe(onAction: (action: HotkeyAction) => void): Promise<() => void>;
+}
+
 export interface StartupApi {
   startsWithWindows(): Promise<boolean>;
   /** Rejects with a readable message when it can't be changed (e.g. a development build). */
@@ -128,6 +137,15 @@ export async function tauriSetup(): Promise<SetupApi> {
 export async function tauriInfo(): Promise<InfoApi> {
   const { invoke } = await import("@tauri-apps/api/core");
   return { about: () => invoke("about") };
+}
+
+export async function tauriHotkeys(): Promise<HotkeyApi> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  const { listen } = await import("@tauri-apps/api/event");
+  return {
+    setEnabled: (enabled) => invoke("set_hotkeys", { enabled }),
+    subscribe: (onAction) => listen<HotkeyAction>("hotkey", (e) => onAction(e.payload)),
+  };
 }
 
 export async function tauriStartup(): Promise<StartupApi> {
@@ -217,6 +235,8 @@ export function mockStartup(): StartupApi {
 }
 
 export const mockInfo = (): InfoApi => ({ about: async () => ({ version: "0.0.0", commit: "preview", dev: true }) });
+
+export const mockHotkeys = (): HotkeyApi => ({ setEnabled: async () => [], subscribe: async () => () => {} });
 
 export const mockLog = (): LogApi => ({
   subscribe: async (onEntry) => {
