@@ -24,6 +24,12 @@ export interface WindowApi {
   close(): void;
 }
 
+export interface StartupApi {
+  startsWithWindows(): Promise<boolean>;
+  /** Rejects with a readable message when it can't be changed (e.g. a development build). */
+  setStartsWithWindows(enabled: boolean): Promise<void>;
+}
+
 export type LogLevel = "info" | "warn" | "error";
 export interface LogEntry { level: LogLevel; message: string }
 
@@ -84,6 +90,14 @@ export async function tauriEngine(): Promise<EngineApi> {
   };
 }
 
+export async function tauriStartup(): Promise<StartupApi> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return {
+    startsWithWindows: () => invoke("starts_with_windows"),
+    setStartsWithWindows: (enabled) => invoke("set_starts_with_windows", { enabled }),
+  };
+}
+
 export async function tauriLog(): Promise<LogApi> {
   const { invoke } = await import("@tauri-apps/api/core");
   const { attachLogger } = await import("@tauri-apps/plugin-log");
@@ -128,6 +142,11 @@ export function mockEngine(): EngineApi {
       return preset;
     },
   };
+}
+
+export function mockStartup(): StartupApi {
+  let on = false;
+  return { startsWithWindows: async () => on, setStartsWithWindows: async (enabled) => void (on = enabled) };
 }
 
 export const mockLog = (): LogApi => ({

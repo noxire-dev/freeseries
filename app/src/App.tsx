@@ -1,20 +1,21 @@
 import { useEffect, useRef, useState } from "react";
-import type { AutoEqApi, Device, EngineApi, LogApi, LogEntry, Preset, Route, Status, WindowApi } from "./api";
+import type { AutoEqApi, Device, EngineApi, LogApi, LogEntry, Preset, Route, StartupApi, Status, WindowApi } from "./api";
 import type { SettingsStore } from "./store";
-import { Devices, Equalizer, Log, Presets } from "./views";
+import { Devices, Equalizer, Log, Presets, Settings } from "./views";
 
-type View = "equalizer" | "presets" | "devices" | "log";
+type View = "equalizer" | "presets" | "devices" | "settings" | "log";
 
 const NAV: { view: View; label: string; icon: string }[] = [
   { view: "equalizer", label: "Equalizer", icon: "M4 7h9m4 0h3M4 17h3m4 0h9M15 4.5v5M9 14.5v5" },
   { view: "presets", label: "Presets", icon: "M5 6h14M5 12h14M5 18h9" },
   { view: "devices", label: "Devices", icon: "M5 18v-5a7 7 0 0 1 14 0v5M5 14.5h2.5v5H5zM16.5 14.5H19v5h-2.5z" },
+  { view: "settings", label: "Settings", icon: "M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zM12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8" },
   { view: "log", label: "Log", icon: "M7 4h10a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM9 9h6M9 13h6M9 17h3" },
 ];
 
 const STATUS_TEXT: Record<Status["state"], string> = { stopped: "Stopped", running: "Running", reconnecting: "Reconnecting…" };
 
-export default function App(p: { engine: EngineApi; win: WindowApi; log: LogApi; autoEq: AutoEqApi; settings: SettingsStore }) {
+export default function App(p: { engine: EngineApi; win: WindowApi; log: LogApi; startup: StartupApi; autoEq: AutoEqApi; settings: SettingsStore }) {
   const { engine, settings } = p;
   const [saved] = useState(() => settings.load());
   const [view, setView] = useState<View>(saved.route ? "equalizer" : "devices");
@@ -121,7 +122,7 @@ export default function App(p: { engine: EngineApi; win: WindowApi; log: LogApi;
             <button onClick={p.win.toggleMaximize} aria-label="Maximize">
               <svg viewBox="0 0 10 10"><rect x="1.5" y="1.5" width="7" height="7" /></svg>
             </button>
-            <button className="is-close" onClick={p.win.close} aria-label="Close">
+            <button className="is-close" onClick={p.win.close} aria-label="Close to tray" title="Close to tray. Audio keeps running.">
               <svg viewBox="0 0 10 10"><path d="M1.5 1.5l7 7m0-7l-7 7" /></svg>
             </button>
           </div>
@@ -148,6 +149,7 @@ export default function App(p: { engine: EngineApi; win: WindowApi; log: LogApi;
             onDelete={(name) => setLibrary(library.filter((n) => n.name !== name))}
           />
         )}
+        {view === "settings" && <Settings startup={p.startup} />}
         {view === "log" && <Log entries={entries} onOpenFolder={p.log.openFolder} />}
         {view === "devices" && (
           <Devices

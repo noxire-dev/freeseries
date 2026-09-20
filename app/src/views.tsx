@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { AutoEqApi, AutoEqEntry, Band, Device, Kind, LogEntry, Preset, Route, Status } from "./api";
+import type { AutoEqApi, AutoEqEntry, Band, Device, Kind, LogEntry, Preset, Route, StartupApi, Status } from "./api";
 import EqGraph, { bandColor } from "./EqGraph";
 import { DB_RANGE, F_MAX, F_MIN, clamp, formatDb, frequencies, totalGainDb } from "./eqmath";
 import { BUILTIN } from "./builtin";
@@ -314,6 +314,46 @@ export function Log(p: { entries: (LogEntry & { time: string })[]; onOpenFolder(
           ))}
         </ol>
       )}
+    </div>
+  );
+}
+
+export function Settings(p: { startup: StartupApi }) {
+  const [enabled, setEnabled] = useState(false);
+  const [error, setError] = useState<string>();
+  useEffect(() => {
+    p.startup.startsWithWindows().then(setEnabled, (e) => setError(String(e)));
+  }, [p.startup]);
+
+  return (
+    <div className="page">
+      <h2>Startup</h2>
+      <ul className="group">
+        <li>
+          <label className="row">
+            <span className="row-title">Start with Windows</span>
+            <input
+              type="checkbox"
+              role="switch"
+              className="switch"
+              checked={enabled}
+              onChange={(e) => {
+                const next = e.target.checked;
+                setError(undefined);
+                p.startup.setStartsWithWindows(next).then(() => setEnabled(next), (err) => setError(String(err)));
+              }}
+            />
+          </label>
+        </li>
+      </ul>
+      <p className="hint hint-below">Starts in the tray and picks up your devices and EQ from last time, so your audio works before you open anything.</p>
+      {error && <p className="notice">{error}</p>}
+
+      <h2>Closing the window</h2>
+      <p className="hint">
+        Closing freeseries hides it in the tray next to the clock and your audio keeps running. To stop it completely, right-click the tray icon
+        and choose Quit.
+      </p>
     </div>
   );
 }
