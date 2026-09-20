@@ -81,6 +81,17 @@ button {
   app-region: drag;
 }
 
+/* `app-region: drag` covers everything inside the region too, and Windows then eats clicks on
+   those controls as window drags and double-click-to-maximise. Controls always opt out. */
+button,
+input,
+label,
+a,
+[role="radiogroup"],
+[role="tablist"] {
+  app-region: no-drag;
+}
+
 /* Frame */
 
 .window {
@@ -111,9 +122,9 @@ button {
 
 .brand-mark {
   flex: none;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
+  width: 24px;
+  height: 24px;
+  border-radius: 6.5px;
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.5);
 }
 
@@ -125,13 +136,15 @@ button {
 .brand-mark path {
   fill: none;
   stroke: #fff;
-  stroke-width: 1.7;
+  stroke-width: 2.4;
   stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .brand-mark circle {
+  fill: var(--accent);
   stroke: #2c2c2e;
-  stroke-width: 0.8;
+  stroke-width: 1.2;
 }
 
 .brand small {
@@ -148,8 +161,17 @@ button {
 .sidebar nav {
   display: grid;
   gap: 2px;
-  flex: 1;
   align-content: start;
+}
+
+.sidebar .nav-primary {
+  flex: 1;
+}
+
+.sidebar nav + nav {
+  padding-bottom: 8px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--separator);
 }
 
 .nav {

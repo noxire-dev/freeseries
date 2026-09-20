@@ -14,6 +14,8 @@ const NAV: { view: View; label: string; icon: string }[] = [
   { view: "log", label: "Log", icon: "M7 4h10a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM9 9h6M9 13h6M9 17h3" },
 ];
 
+const SECONDARY = new Set<View>(["settings", "log"]);
+
 const STATUS_TEXT: Record<Status["state"], string> = { stopped: "Stopped", running: "Running", reconnecting: "Reconnecting…" };
 const FLAT: Preset = { preampDb: 0, bands: [] };
 
@@ -98,28 +100,29 @@ export default function App(p: {
 
   return (
     <div className="window">
-      <aside className="sidebar" data-tauri-drag-region>
+      <aside className="sidebar">
         <h1 className="brand" data-tauri-drag-region>
           <svg className="brand-mark" viewBox="0 0 28 28" aria-hidden="true">
             <rect width="28" height="28" rx="7" />
-            <path d="M4.5 15.5c1.8 0 2.5-5.2 4.6-5.2s3 7.4 5.4 7.4 2.9-9 5.3-9 2.9 6.8 4.7 6.8" />
-            <circle cx="9.1" cy="10.3" r="1.9" fill="#ff453a" />
-            <circle cx="14.5" cy="17.7" r="1.9" fill="#ffd60a" />
-            <circle cx="19.8" cy="8.7" r="1.9" fill="#0a84ff" />
+            <path d="M4 18h3c3.9 0 4-9 7-9s3.1 9 7 9h3" />
+            <circle cx="14" cy="9" r="3" />
           </svg>
           freeseries
           {import.meta.env.DEV && <small>dev</small>}
         </h1>
-        <nav>
-          {NAV.map((n) => (
-            <button key={n.view} className="nav" aria-current={view === n.view ? "page" : undefined} onClick={() => setView(n.view)}>
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d={n.icon} />
-              </svg>
-              {n.label}
-            </button>
-          ))}
-        </nav>
+        {/* What you use every day on top; the rest sits out of the way above the status. */}
+        {[NAV.filter((n) => !SECONDARY.has(n.view)), NAV.filter((n) => SECONDARY.has(n.view))].map((items, group) => (
+          <nav key={group} className={group === 0 ? "nav-primary" : undefined} aria-label={group === 0 ? "Main" : "More"}>
+            {items.map((n) => (
+              <button key={n.view} className="nav" aria-current={view === n.view ? "page" : undefined} onClick={() => setView(n.view)}>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d={n.icon} />
+                </svg>
+                {n.label}
+              </button>
+            ))}
+          </nav>
+        ))}
         <button className="status" onClick={() => setView("devices")} title="Open Devices">
           <span className={`status-dot is-${status.state}`} />
           <span>
