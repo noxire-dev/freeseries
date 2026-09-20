@@ -1,13 +1,15 @@
 //! Engine control: owns the audio session on its own thread and keeps audio flowing.
 //!
-//! The user hands it a plan: the virtual device apps play into, and their real outputs in order of
-//! preference, each with its own EQ. The engine plays on the best output that is usable right now
-//! and moves when that changes (headset switched off, device unplugged, headset back on). It also
-//! reopens the session when the OS invalidates it (spatial sound toggled, format changed).
+//! The user hands it a plan: the channels (one virtual device each: Game, Chat, ...) with their
+//! own volume and EQ, and the real outputs in order of preference, each with its own EQ. The
+//! engine mixes the channels and plays them on the best output that is usable right now, moving
+//! when that changes (headset switched off, device unplugged, headset back on). It also reopens
+//! the session when the OS invalidates it (spatial sound toggled, format changed).
 
 use crate::eq::Preset;
 use crate::spectrum::Tap;
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -21,11 +23,31 @@ pub struct DeviceInfo {
     pub sample_rate: u32,
 }
 
-/// Capture everything played into `from`, play the processed result on `to`. Both are device ids.
+/// What one audio session does: capture everything played into each source, mix, play on `to`.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Route {
-    pub from: String,
+pub struct Mix {
+    pub sources: Vec<Source>,
     pub to: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Source {
+    /// Which channel's volume and EQ apply (`Dsp::channel`).
+    pub channel: String,
+    /// The virtual device to capture, by device id.
+    pub from: String,
+}
+
+/// One virtual device apps play into, with the volume and EQ that belong to it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Channel {
+    /// Stable key: "main", "chat", ...
+    pub id: String,
+    pub from: String,
+    /// Linear gain, 0 (muted) to 1.
+    pub volume: f32,
+    pub preset: Preset,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -38,8 +60,8 @@ pub struct Output {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Plan {
-    /// The virtual device apps play into.
-    pub from: String,
+    /// The virtual devices apps play into. Mixed together.
+    pub channels: Vec<Channel>,
     /// Real outputs, most preferred first.
     pub outputs: Vec<Output>,
 }
@@ -59,7 +81,7 @@ pub trait AudioBackend: Send + 'static {
     type Session;
     fn outputs(&self) -> Result<Vec<DeviceInfo>, String>;
     /// `on_lost` must be called when the session dies on its own and needs reopening.
-    fn open(&self, route: &Route, dsp: Arc<Dsp>, on_lost: Box<dyn Fn() + Send + Sync>) -> Result<Self::Session, String>;
+    fn open(&self, mix: &Mix, dsp: Arc<Dsp>, on_lost: Box<dyn Fn() + Send + Sync>) -> Result<Self::Session, String>;
 }
 
 /// Whether an output that Windows still lists can actually be heard. A wireless headset with a
@@ -91,24 +113,75 @@ impl Default for Timing {
     }
 }
 
-/// EQ settings shared with the audio callback, which never blocks on them.
+/// A preset the UI sets and an audio callback picks up, without the callback ever blocking.
 #[derive(Default)]
-pub struct Dsp {
+pub struct PresetCell {
     preset: Mutex<Preset>,
     dirty: AtomicBool,
-    bypass: AtomicBool,
-    analysing: AtomicBool,
-    tap: Mutex<Tap>,
 }
 
-impl Dsp {
-    pub fn set_preset(&self, preset: Preset) {
+impl PresetCell {
+    pub fn set(&self, preset: Preset) {
         *self.preset.lock().unwrap() = preset;
         self.dirty.store(true, Relaxed);
     }
 
-    pub fn preset(&self) -> Preset {
+    pub fn get(&self) -> Preset {
         self.preset.lock().unwrap().clone()
+    }
+
+    /// For the audio callback: the preset, if it changed since the last call.
+    pub fn take_changed(&self) -> Option<Preset> {
+        if !self.dirty.swap(false, Relaxed) {
+            return None;
+        }
+        match self.preset.try_lock() {
+            Ok(p) => Some(p.clone()),
+            Err(_) => {
+                self.dirty.store(true, Relaxed); // UI holds the lock right now, pick it up next callback
+                None
+            }
+        }
+    }
+}
+
+/// One channel's settings, shared with its capture callback.
+pub struct ChannelDsp {
+    pub eq: PresetCell,
+    volume: AtomicU32,
+}
+
+impl Default for ChannelDsp {
+    fn default() -> Self {
+        ChannelDsp { eq: PresetCell::default(), volume: AtomicU32::new(1f32.to_bits()) }
+    }
+}
+
+impl ChannelDsp {
+    pub fn set_volume(&self, volume: f32) {
+        self.volume.store(volume.clamp(0.0, 1.0).to_bits(), Relaxed);
+    }
+
+    pub fn volume(&self) -> f32 {
+        f32::from_bits(self.volume.load(Relaxed))
+    }
+}
+
+/// Everything the audio callbacks share with the rest of the app. `eq` is the output's EQ, applied
+/// to the mix; each channel has its own on top of that.
+#[derive(Default)]
+pub struct Dsp {
+    pub eq: PresetCell,
+    bypass: AtomicBool,
+    analysing: AtomicBool,
+    tap: Mutex<Tap>,
+    channels: Mutex<HashMap<String, Arc<ChannelDsp>>>,
+}
+
+impl Dsp {
+    /// The settings of one channel, created on first use.
+    pub fn channel(&self, id: &str) -> Arc<ChannelDsp> {
+        self.channels.lock().unwrap().entry(id.to_string()).or_default().clone()
     }
 
     pub fn set_bypass(&self, bypass: bool) {
@@ -137,20 +210,6 @@ impl Dsp {
     /// dBFS per log-spaced band of what is playing, or `None` while the analyser is off.
     pub fn spectrum(&self, bands: usize) -> Option<Vec<f32>> {
         self.analysing.load(Relaxed).then(|| self.tap.lock().unwrap().spectrum(bands))
-    }
-
-    /// For the audio callback: the preset, if it changed since the last call.
-    pub fn take_changed(&self) -> Option<Preset> {
-        if !self.dirty.swap(false, Relaxed) {
-            return None;
-        }
-        match self.preset.try_lock() {
-            Ok(p) => Some(p.clone()),
-            Err(_) => {
-                self.dirty.store(true, Relaxed); // UI holds the lock right now, pick it up next callback
-                None
-            }
-        }
     }
 }
 
@@ -205,15 +264,23 @@ impl Engine {
                 match cmd {
                     Some(Cmd::Quit) => return,
                     Some(Cmd::Plan(new)) => {
-                        if new.as_ref().map(|p| &p.from) != plan.as_ref().map(|p| &p.from) {
-                            session = None; // different virtual device: nothing of the old session survives
+                        if new.as_ref().map(sources) != plan.as_ref().map(sources) {
+                            session = None; // other virtual devices: nothing of the old session survives
                         }
                         plan = new;
-                        // The playing output may have a new preset in this plan.
-                        if let (Some(p), Some((_, active))) = (&plan, &session) {
-                            if let Some(o) = p.outputs.iter().find(|o| &o.id == active) {
-                                if o.preset != dsp.preset() {
-                                    dsp.set_preset(o.preset.clone());
+                        if let Some(p) = &plan {
+                            // Volumes and channel EQs apply live, with or without a reopen.
+                            for c in &p.channels {
+                                let live = dsp.channel(&c.id);
+                                live.set_volume(c.volume);
+                                if c.preset != live.eq.get() {
+                                    live.eq.set(c.preset.clone());
+                                }
+                            }
+                            // The playing output may have a new preset in this plan.
+                            if let Some(o) = session.as_ref().and_then(|(_, active)| p.outputs.iter().find(|o| &o.id == active)) {
+                                if o.preset != dsp.eq.get() {
+                                    dsp.eq.set(o.preset.clone());
                                 }
                             }
                         }
@@ -226,7 +293,7 @@ impl Engine {
                                 o.preset = preset.clone();
                             }
                         }
-                        dsp.set_preset(preset);
+                        dsp.eq.set(preset);
                         continue;
                     }
                     Some(Cmd::Lost(g)) if g == generation => session = None,
@@ -255,10 +322,10 @@ impl Engine {
                     generation += 1;
                     let (tx, g) = (tx.clone(), generation);
                     let on_lost = Box::new(move || drop(tx.send(Cmd::Lost(g))));
-                    match backend.open(&Route { from: p.from.clone(), to: output.id.clone() }, dsp.clone(), on_lost) {
+                    match backend.open(&Mix { sources: sources(p), to: output.id.clone() }, dsp.clone(), on_lost) {
                         Ok(s) => {
                             // Only now: a failed attempt must not touch the EQ of what is playing.
-                            dsp.set_preset(output.preset.clone());
+                            dsp.eq.set(output.preset.clone());
                             session = Some((s, output.id.clone()));
                             break;
                         }
@@ -292,6 +359,10 @@ impl Engine {
     }
 }
 
+fn sources(plan: &Plan) -> Vec<Source> {
+    plan.channels.iter().map(|c| Source { channel: c.id.clone(), from: c.from.clone() }).collect()
+}
+
 /// Logs transitions only, so a device that stays gone doesn't write a line every retry.
 fn set_status(status: &Mutex<Status>, next: Status) {
     let mut current = status.lock().unwrap();
@@ -323,6 +394,7 @@ mod tests {
     struct Fake {
         results: Arc<Mutex<VecDeque<Result<(), String>>>>,
         opened: Arc<Mutex<Vec<(String, Lost)>>>,
+        mixes: Arc<Mutex<Vec<Mix>>>,
         off: Arc<Mutex<HashSet<String>>>,
     }
 
@@ -331,9 +403,10 @@ mod tests {
         fn outputs(&self) -> Result<Vec<DeviceInfo>, String> {
             Ok(["headset", "monitor"].map(|id| DeviceInfo { id: id.into(), name: id.into(), channels: 2, sample_rate: 48000 }).into())
         }
-        fn open(&self, route: &Route, _: Arc<Dsp>, on_lost: Lost) -> Result<(), String> {
+        fn open(&self, mix: &Mix, _: Arc<Dsp>, on_lost: Lost) -> Result<(), String> {
             self.results.lock().unwrap().pop_front().unwrap_or(Ok(()))?;
-            self.opened.lock().unwrap().push((route.to.clone(), on_lost));
+            self.mixes.lock().unwrap().push(mix.clone());
+            self.opened.lock().unwrap().push((mix.to.clone(), on_lost));
             Ok(())
         }
     }
@@ -359,7 +432,8 @@ mod tests {
     }
 
     fn plan() -> Plan {
-        Plan { from: "virtual".into(), outputs: vec![Output { id: "headset".into(), preset: preset(1.0) }, Output { id: "monitor".into(), preset: preset(2.0) }] }
+        let channel = |id: &str, from: &str| Channel { id: id.into(), from: from.into(), volume: 1.0, preset: Preset::default() };
+        Plan { channels: vec![channel("main", "virtual"), channel("chat", "virtual-chat")], outputs: vec![Output { id: "headset".into(), preset: preset(1.0) }, Output { id: "monitor".into(), preset: preset(2.0) }] }
     }
 
     fn running(id: &str) -> Status {
@@ -395,24 +469,51 @@ mod tests {
     }
 
     #[test]
+    fn channels_are_mixed_and_their_settings_apply_without_a_reopen() {
+        let fake = Fake::default();
+        let engine = Engine::start_with(fake.clone(), fake.clone(), FAST);
+        engine.set_plan(Some(plan()));
+        wait_for("running", || engine.status() == running("headset"));
+        let sources: Vec<String> = fake.mixes.lock().unwrap()[0].sources.iter().map(|s| format!("{}<-{}", s.channel, s.from)).collect();
+        assert_eq!(sources, ["main<-virtual", "chat<-virtual-chat"], "one session captures every channel");
+
+        // The Game/Chat balance is dragged: chat goes quiet and gets its own EQ.
+        let mut quieter = plan();
+        quieter.channels[1].volume = 0.25;
+        quieter.channels[1].preset = preset(3.0);
+        engine.set_plan(Some(quieter));
+        wait_for("chat volume", || engine.dsp.channel("chat").volume() == 0.25);
+        assert_eq!(engine.dsp.channel("chat").eq.get(), preset(3.0));
+        assert_eq!(engine.dsp.channel("main").volume(), 1.0);
+        assert_eq!(fake.opened.lock().unwrap().len(), 1, "a volume or EQ change must not interrupt the audio");
+
+        // The chat device goes away: that is a different capture, so the session is rebuilt.
+        let mut solo = plan();
+        solo.channels.truncate(1);
+        engine.set_plan(Some(solo));
+        wait_for("reopen with one channel", || fake.mixes.lock().unwrap().len() == 2);
+        assert_eq!(fake.mixes.lock().unwrap()[1].sources.len(), 1);
+    }
+
+    #[test]
     fn follows_the_best_usable_output_and_keeps_each_eq() {
         let fake = Fake::default();
         let engine = Engine::start_with(fake.clone(), fake.clone(), FAST);
 
         engine.set_plan(Some(plan()));
         wait_for("headset first", || engine.status() == running("headset"));
-        assert_eq!(engine.dsp.preset(), preset(1.0));
+        assert_eq!(engine.dsp.eq.get(), preset(1.0));
 
         engine.set_preset(preset(1.5)); // the user tunes the headset
-        wait_for("live edit", || engine.dsp.preset() == preset(1.5));
+        wait_for("live edit", || engine.dsp.eq.get() == preset(1.5));
 
         fake.off.lock().unwrap().insert("headset".into()); // headset switched off
         wait_for("falls to the monitor", || engine.status() == running("monitor"));
-        assert_eq!(engine.dsp.preset(), preset(2.0), "the monitor plays with its own EQ");
+        assert_eq!(engine.dsp.eq.get(), preset(2.0), "the monitor plays with its own EQ");
 
         fake.off.lock().unwrap().clear(); // headset back on
         wait_for("back to the headset", || engine.status() == running("headset"));
-        assert_eq!(engine.dsp.preset(), preset(1.5), "the headset gets its tuned EQ back, not the plan's original");
+        assert_eq!(engine.dsp.eq.get(), preset(1.5), "the headset gets its tuned EQ back, not the plan's original");
 
         // A better output that refuses to open must not cost the one that works.
         fake.off.lock().unwrap().insert("headset".into());

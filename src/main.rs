@@ -1,6 +1,6 @@
 //! CLI for the engine, for development and soak testing. The app lives in `src-tauri`.
 
-use freeseries::engine::{AlwaysOn, AudioBackend, Engine, Output, Plan};
+use freeseries::engine::{AlwaysOn, AudioBackend, Channel, Engine, Output, Plan};
 use freeseries::{eq, wasapi::Wasapi};
 use std::error::Error;
 use std::time::Duration;
@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         for (i, d) in devices.iter().enumerate() {
             println!("{i}: {} ({} ch, {} Hz)", d.name, d.channels, d.sample_rate);
         }
-        println!("\nusage: freeseries run <source#> <target#> [ParametricEQ.txt]");
+        println!("\nusage: freeseries run <source#>[,<source#>...] <target#> [ParametricEQ.txt]");
         return Ok(());
     }
 
@@ -42,7 +42,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     println!("{} EQ bands. Ctrl+C to stop.", preset.bands.len());
     let engine = Engine::start(Wasapi, AlwaysOn);
-    engine.set_plan(Some(Plan { from: device(&args[1])?, outputs: vec![Output { id: device(&args[2])?, preset }] }));
+    // Several sources ("0,1") are mixed, the way the app's channels are.
+    let channels = args[1]
+        .split(',')
+        .enumerate()
+        .map(|(i, source)| Ok(Channel { id: format!("channel{i}"), from: device(source)?, volume: 1.0, preset: eq::Preset::default() }))
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+    engine.set_plan(Some(Plan { channels, outputs: vec![Output { id: device(&args[2])?, preset }] }));
 
     loop {
         std::thread::sleep(Duration::from_secs(3600));
