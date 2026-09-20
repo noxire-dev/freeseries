@@ -3,6 +3,7 @@ mod eq;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::collections::VecDeque;
 use std::error::Error;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -89,12 +90,26 @@ fn open(
         }
     };
 
+    // Loopback delivers no packets while the endpoint is silent, and WASAPI flags the first packet
+    // after a gap as a discontinuity, which cpal reports as an xrun. Only an xrun that lands
+    // mid-audio (previous packet was recent) is a real glitch worth reporting.
+    let started = std::time::Instant::now();
+    let last_packet_ms = Arc::new(AtomicU64::new(0));
+    let (seen, report) = (last_packet_ms.clone(), on_error("capture"));
+    let on_capture_error = move |e: cpal::Error| {
+        let gap = started.elapsed().as_millis() as u64 - seen.load(Ordering::Relaxed);
+        if e.kind() != cpal::ErrorKind::Xrun || gap < 30 {
+            report(e);
+        }
+    };
+
     let mut eq = eq::Eq::new(preset, rate as f64, out_ch);
     let mut scratch: Vec<f32> = Vec::new();
     let producer = queue.clone();
     let capture = from.build_input_stream(
         in_cfg.config(),
         move |data: &[f32], _: &_| {
+            last_packet_ms.store(started.elapsed().as_millis() as u64, Ordering::Relaxed);
             scratch.clear();
             for frame in data.chunks_exact(in_ch) {
                 // ponytail: channel mismatch keeps front L/R only; fine while the source is a
@@ -107,7 +122,7 @@ fn open(
             let excess = q.len().saturating_sub(max_queued);
             q.drain(..excess);
         },
-        on_error("capture"),
+        on_capture_error,
         None,
     )?;
 
