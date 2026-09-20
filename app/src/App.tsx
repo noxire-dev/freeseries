@@ -34,6 +34,7 @@ export default function App(p: {
   const [source, setSource] = useState<string | null>(saved.source);
   const [outputs, setOutputs] = useState<SavedOutput[]>(saved.outputs);
   const [running, setRunning] = useState(saved.running && p.autoStart);
+  const [autoSwitch, setAutoSwitch] = useState(saved.autoSwitch);
   const [bypass, setBypass] = useState(saved.bypass);
   const [library, setLibrary] = useState(saved.library);
   const [status, setStatus] = useState<Status>({ state: "stopped" });
@@ -54,18 +55,20 @@ export default function App(p: {
     return () => clearInterval(poll);
   }, [engine]);
 
-  useEffect(() => settings.save({ source, outputs, running, bypass, library }), [source, outputs, running, bypass, library]);
+  useEffect(() => settings.save({ source, outputs, running, autoSwitch, bypass, library }), [source, outputs, running, autoSwitch, bypass, library]);
 
   // The virtual device is found by name; `source` only matters when that fails and the user picked one.
   const virtual = findVirtualDevice(devices)?.id ?? source;
 
   // The engine gets a new plan when its shape changes, not on every EQ tweak: live edits go
   // through setPreset, and the engine keeps them with the output that was playing.
-  const latest = useRef(outputs);
-  latest.current = outputs;
+  // With switching off the engine only ever hears about the first output, so it can't move.
+  const planned = autoSwitch ? outputs : outputs.slice(0, 1);
+  const latest = useRef(planned);
+  latest.current = planned;
   const activeNow = status.state === "running" ? status.output : undefined;
-  const idle = outputs.filter((o) => o.id !== activeNow).map((o) => o.preset);
-  const shape = running && virtual && outputs.length ? `${virtual}|${outputs.map((o) => o.id).join("|")}|${JSON.stringify(idle)}` : null;
+  const idle = planned.filter((o) => o.id !== activeNow).map((o) => o.preset);
+  const shape = running && virtual && planned.length ? `${virtual}|${planned.map((o) => o.id).join("|")}|${JSON.stringify(idle)}` : null;
   useEffect(() => {
     engine.setPlan(shape && virtual ? { from: virtual, outputs: latest.current.map(({ id, preset }) => ({ id, preset })) } : null);
   }, [engine, shape]);
@@ -205,6 +208,8 @@ export default function App(p: {
             outputs={outputs}
             activeId={activeId}
             running={running}
+            autoSwitch={autoSwitch}
+            onAutoSwitch={setAutoSwitch}
             status={status}
             onSource={setSource}
             onOutputs={setOutputs}

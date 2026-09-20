@@ -20,7 +20,8 @@
         "decorations": false,
         "theme": "Dark",
         "backgroundColor": "#1E1E1E",
-        "visible": false
+        "visible": false,
+        "dragDropEnabled": false
       }
     ],
     "security": {

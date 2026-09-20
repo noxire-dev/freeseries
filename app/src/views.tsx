@@ -238,7 +238,9 @@ export function Devices(p: {
   outputs: SavedOutput[];
   activeId: string | undefined;
   running: boolean;
+  autoSwitch: boolean;
   status: Status;
+  onAutoSwitch(enabled: boolean): void;
   onSource(id: string): void;
   onOutputs(outputs: SavedOutput[]): void;
   onRunning(running: boolean): void;
@@ -247,9 +249,12 @@ export function Devices(p: {
   const virtual = p.detected?.id ?? p.source;
   const chosen = new Set(p.outputs.map((o) => o.id));
   const available = p.devices.filter((d) => d.id !== virtual && !chosen.has(d.id));
-  const move = (i: number, by: number) => {
+  // Reordering: drag a row, or use its arrow buttons (keyboard and screen readers).
+  const [drag, setDrag] = useState<number | null>(null);
+  const [over, setOver] = useState<number | null>(null);
+  const move = (from: number, to: number) => {
     const next = [...p.outputs];
-    [next[i], next[i + by]] = [next[i + by], next[i]];
+    next.splice(to, 0, ...next.splice(from, 1));
     p.onOutputs(next);
   };
 
@@ -285,21 +290,48 @@ export function Devices(p: {
 
       <h2>You listen on</h2>
       <p className="hint">
-        freeseries plays on the first one that's switched on and moves by itself when that changes. Each keeps its own EQ. Leave spatial sound
-        off on these so it isn't applied twice.
+        {p.autoSwitch
+          ? "Drag them into the order you prefer. freeseries plays on the highest one that's switched on: when it goes off, audio moves down the list, and when it comes back, audio moves back up."
+          : "freeseries only plays on the first one. Drag another to the top to use that instead."}{" "}
+        Each keeps its own EQ. Leave spatial sound off on these so it isn't applied twice.
       </p>
       {p.outputs.length > 0 && (
-        <ol className="group">
+        <ol className="group" onDragLeave={(e) => e.currentTarget.contains(e.relatedTarget as Node) || setOver(null)}>
           {p.outputs.map((o, i) => (
-            <li key={o.id} className="row">
+            <li
+              key={o.id}
+              className={`row row-draggable${drag === i ? " is-dragging" : ""}${over === i && drag !== null && drag !== i ? (drag < i ? " is-over-below" : " is-over-above") : ""}${!p.autoSwitch && i > 0 ? " is-unused" : ""}`}
+              draggable
+              onDragStart={(e) => {
+                setDrag(i);
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("text/plain", o.id);
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                setOver(i);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (drag !== null && drag !== i) move(drag, i);
+              }}
+              onDragEnd={() => {
+                setDrag(null);
+                setOver(null);
+              }}
+            >
+              <svg className="grip" viewBox="0 0 10 16" aria-hidden="true">
+                <path d="M3 3h.01M7 3h.01M3 8h.01M7 8h.01M3 13h.01M7 13h.01" />
+              </svg>
               <span className="row-order">{i + 1}</span>
               <span className="row-title">{p.devices.find((d) => d.id === o.id)?.name ?? (o.name || "Disconnected device")}</span>
               {o.id === p.activeId ? <span className="badge">Playing</span> : !p.devices.some((d) => d.id === o.id) && <span className="row-detail">Not connected</span>}
               <span className="row-detail">{o.presetName}</span>
-              <button className="icon-button" onClick={() => move(i, -1)} disabled={i === 0} aria-label={`Move ${o.name} up`} title="Prefer this one more">
+              <button className="icon-button" onClick={() => move(i, i - 1)} disabled={i === 0} aria-label={`Move ${o.name} up`} title="Prefer this one more">
                 <svg viewBox="0 0 12 12"><path d="M2.5 7.5 6 4l3.5 3.5" /></svg>
               </button>
-              <button className="icon-button" onClick={() => move(i, 1)} disabled={i === p.outputs.length - 1} aria-label={`Move ${o.name} down`} title="Prefer this one less">
+              <button className="icon-button" onClick={() => move(i, i + 1)} disabled={i === p.outputs.length - 1} aria-label={`Move ${o.name} down`} title="Prefer this one less">
                 <svg viewBox="0 0 12 12"><path d="M2.5 4.5 6 8l3.5-3.5" /></svg>
               </button>
               <button className="link link-danger" onClick={() => p.onOutputs(p.outputs.filter((x) => x.id !== o.id))}>
@@ -308,6 +340,16 @@ export function Devices(p: {
             </li>
           ))}
         </ol>
+      )}
+      {p.outputs.length > 1 && (
+        <ul className="group group-below">
+          <li>
+            <label className="row">
+              <span className="row-title">Switch outputs automatically</span>
+              <input type="checkbox" role="switch" className="switch" checked={p.autoSwitch} onChange={(e) => p.onAutoSwitch(e.target.checked)} />
+            </label>
+          </li>
+        </ul>
       )}
       {available.length > 0 && (
         <ul className="group group-below">

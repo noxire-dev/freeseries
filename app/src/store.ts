@@ -11,6 +11,8 @@ export interface Saved {
   /** Most preferred first. */
   outputs: SavedOutput[];
   running: boolean;
+  /** Move between outputs by itself. Off: only the first output is ever used. */
+  autoSwitch: boolean;
   bypass: boolean;
   library: NamedPreset[];
 }
@@ -20,7 +22,7 @@ export interface SettingsStore {
   save(saved: Saved): void;
 }
 
-const EMPTY: Saved = { source: null, outputs: [], running: false, bypass: false, library: [] };
+const EMPTY: Saved = { source: null, outputs: [], running: false, autoSwitch: true, bypass: false, library: [] };
 
 /** 0.1.x stored a single route with one global preset. */
 function migrate(raw: Record<string, any>): Partial<Saved> {
