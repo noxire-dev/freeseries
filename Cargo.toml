@@ -9,3 +9,7 @@ cpal = "0.18"
 hidapi = { version = "2.6.7", default-features = false, features = ["windows-native"] }
 log = "0.4.34"
 serde = { version = "1.0.229", features = ["derive"] }
+
+[dev-dependencies]
+wasapi = "0.24.0"
+windows = { version = "0.62", features = ["Win32_Media_Audio", "Win32_System_Com", "Win32_Foundation"] }

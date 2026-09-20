@@ -3,6 +3,7 @@
 #
 #   -DryRun      check the package and report what would happen; needs no admin rights
 #   -RenameOnly  skip the install, only (re)name the endpoint
+#   -AddInstance install one more instance of the device even though one exists (channels experiment)
 #
 # Rollback: pnputil /remove-device "ROOT\MEDIA\000x", then pnputil /delete-driver <oemNN.inf> /uninstall
 param(
@@ -10,7 +11,8 @@ param(
     [Parameter(Mandatory = $true)][string]$Result,
     [string]$Name = "freeseries",
     [switch]$DryRun,
-    [switch]$RenameOnly
+    [switch]$RenameOnly,
+    [switch]$AddInstance
 )
 $ErrorActionPreference = 'Stop'
 $log = New-Object System.Collections.Generic.List[string]
@@ -125,7 +127,7 @@ public static class Endpoint {
     $present = @(Get-PnpDevice -ErrorAction SilentlyContinue | Where-Object { $_.HardwareID -contains 'Root\FXVAD' -and $_.Status -eq 'OK' })
     if ($RenameOnly) {
         Say "install skipped (rename only)"
-    } elseif ($present.Count -gt 0) {
+    } elseif ($present.Count -gt 0 -and -not $AddInstance) {
         Say "driver already installed: $($present[0].InstanceId)"
     } elseif ($DryRun) {
         Say "would install $(Join-Path $Pkg 'fxvad.inf') as Root\FXVAD"
@@ -142,7 +144,7 @@ public static class Endpoint {
 
     # The rename is a nicety: never let it turn a successful install into a failure.
     try {
-        $renamed = [Endpoint]::Rename('FxSound', $Name, -not $DryRun)
+        $renamed = [Endpoint]::Rename('FxSound', $Name, (-not $DryRun) -and (-not $AddInstance))
         if ($renamed.Count -eq 0) { Say "no endpoint to name yet" } else { $renamed | ForEach-Object { Say "endpoint: $_" } }
     } catch { Say "endpoint not renamed: $($_.Exception.Message)" }
 

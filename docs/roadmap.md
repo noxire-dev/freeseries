@@ -30,14 +30,19 @@ The EQ editor needs love and the app reads as an open-source project. Do it as a
 
 Let Sonar users bring their configs. Format is **unresearched**: find where GG stores Sonar configs on disk and what a shared community-config link contains, then map its filters onto our bands.
 
-## 5. Game / Media / Chat channels, mic EQ (v2)
+## 5. Game / Media / Chat channels, mic EQ
 
-The expensive one. fxvad gives us exactly one virtual endpoint and we can't ship a second signed driver (see `architecture.md`). Two candidate routes, both **unresearched**:
+Measured 2026-09-20 with `examples/process_probe.rs` (child process plays tones, parent captures its process-tree loopback and the endpoint loopback at once):
 
-- Windows per-process loopback capture (`AUDCLNT_PROCESS_LOOPBACK`, Windows 10 2004+): every app plays into the one endpoint, the engine captures each app's audio separately and mixes with per-channel volume and EQ. Open question that decides it: is a per-process capture taken before or after the spatial renderer? If before, channels and Atmos/DTS don't combine this way.
-- A second virtual device the user installs themselves (VB-Cable) for chat.
+- Windows' per-process loopback returns the app's **raw stream**: a stereo tone comes back bit-for-level (-20.0 dBFS, L only); of a 7.1 stream it returns the front pair only (back-left: silence). It is pre-mix and pre-spatial, so it can never carry the Atmos/DTS render.
+- It is taken **after** the session volume: muting the app in the mixer silences the endpoint loopback *and* the per-process capture. So "mute it on the endpoint, capture it per process" doesn't work, and neither does subtracting captures from the mix (the spatial renderer doesn't pass stereo bit-exactly).
 
-Research spike first, with `examples/probe.rs`-style measurements, before any design.
+What that leaves, best first:
+
+1. **A second instance of the same signed driver.** fxvad is root-enumerated; Windows can create another `Root\FXVAD` devnode on the package already installed, giving two virtual endpoints ("freeseries Game", "freeseries Chat"), each with its own loopback, EQ and volume, spatial sound on Game only. This is Sonar's own model, with no new driver to sign. **Unverified:** whether fxvad tolerates two instances. Test: `setup.ps1 -AddInstance` (elevated); a failed instance is removed with `pnputil /remove-device`.
+2. **Mixer-only channels** as the fallback: group apps into Game/Chat/Media and drive their Windows session volumes (`ISimpleAudioVolume`, what the Volume Mixer does). Works with Atmos/DTS and adds no latency, but no per-channel EQ.
+
+Mic processing (noise suppression, mic EQ) needs a virtual *capture* device; fxvad's capture pin is disabled in its signed INF. Parked.
 
 ## Latency (measured 2026-09-20 with `examples/latency.rs`)
 
