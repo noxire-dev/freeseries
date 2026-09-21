@@ -64,9 +64,11 @@ export interface HeadsetState {
   /** 0 to 1. */
   battery: number | null;
   micMuted: boolean | null;
+  /** The headset's own volume knob, 0 to 1. Null until it has been turned. */
+  volume: number | null;
   /** Game and chat side of a ChatMix dial, each 0 to 1: both full in the middle. */
   dial: [number, number] | null;
-  /** Counts everything the device said without being asked: someone is at its controls. */
+  /** Counts what the device said by itself that we can't read: someone is doing something at it that we don't follow. */
   activity: number;
 }
 
@@ -358,11 +360,12 @@ export const mockInfo = (): InfoApi => ({ about: async () => ({ version: "0.0.0"
 
 /** A Nova Pro at 75 %. `window.dial(game, chat)` turns its dial in the preview. */
 export const mockHeadset = (): HeadsetApi => {
-  let state: HeadsetState = { model: "Arctis Nova Pro Wireless", online: true, battery: 0.75, micMuted: false, dial: null, activity: 0 };
+  let state: HeadsetState = { model: "Arctis Nova Pro Wireless", online: true, battery: 0.75, micMuted: false, volume: null, dial: null, activity: 0 };
   const listeners = new Set<{ onChange(state: HeadsetState): void }>(); // wrapped: React subscribes the same function twice in dev
+  (window as any).volume = (volume: number) => listeners.forEach((l) => l.onChange((state = { ...state, volume })));
   (window as any).touch = () => listeners.forEach((l) => l.onChange((state = { ...state, activity: state.activity + 1 }))); // a button on the device
   (window as any).dial = (game: number, chat: number) => {
-    state = { ...state, dial: [game, chat], activity: state.activity + 1 };
+    state = { ...state, dial: [game, chat] };
     listeners.forEach((l) => l.onChange(state));
   };
   return {

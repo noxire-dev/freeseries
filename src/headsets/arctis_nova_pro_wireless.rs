@@ -29,6 +29,10 @@ pub static MODEL: Model = Model {
             ],
         },
         Report { prefix: &[0x07, 0x45], fields: &[(Field::DialGame, 2, Decode::Percent), (Field::DialChat, 3, Decode::Percent)] },
+        // What the station says by itself (as documented by ggoled): the volume knob, battery, the headset coming and going.
+        Report { prefix: &[0x07, 0x25], fields: &[(Field::Volume, 2, Decode::StepsDown(0x38))] },
+        Report { prefix: &[0x07, 0xB7], fields: &[(Field::Battery, 2, Decode::Steps(8))] },
+        Report { prefix: &[0x07, 0xB5], fields: &[(Field::Online, 4, Decode::Is(0x08))] },
     ],
     // "Sonar is here", then software ChatMix. Without them the dial says nothing on a PC.
     dial_on: &[&[0x06, 0x8D, 0x01], &[0x06, 0x49, 0x01]],
@@ -72,7 +76,8 @@ mod tests {
         assert_eq!(state.dial, Some((1.0, 1.0)));
         assert!(decode(&MODEL, &[0x07, 0x45, 0x64, 0x53, 0, 0], &mut state));
         assert_eq!(state.dial, Some((1.0, 0.83)));
-        assert!(!decode(&MODEL, &[0x07, 0x25, 30], &mut state), "the volume knob is not something we track");
-        assert_eq!(state.dial, Some((1.0, 0.83)));
+        assert!(decode(&MODEL, &[0x07, 0x25, 0x1C], &mut state), "the volume knob, counted down from 0x38");
+        assert_eq!((state.volume, state.dial), (Some(0.5), Some((1.0, 0.83))));
+        assert!(!decode(&MODEL, &[0x07, 0x99, 1], &mut state), "something we can't read");
     }
 }

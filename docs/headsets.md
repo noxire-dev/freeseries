@@ -134,9 +134,11 @@ safely later is data that can't hurt anything: display skins.
 only while the dial turns), a FreeSeries screen (time, battery, the main channel's sound), or dark.
 Burn-in protection, for the modes where we are the one drawing: the screen moves along a small
 orbit, one pixel a minute; it goes dark after the user has been away from keyboard and mouse for
-a chosen time (`src/idle.rs`); and because the device draws its own menu on the same display, any
-message it sends without being asked (`State::activity`: a knob, a button) gives it the screen
-back for ten seconds. On Quit the watcher releases the display. Identical frames are not sent
+a chosen time (`src/idle.rs`). The device's knobs are ours to show: the dial draws the balance, the
+volume knob (`07 25`, counted down from 0x38) draws the volume, each for two seconds. Anything
+else the device says by itself that the table can't read (`State::activity`) means someone is in
+its own menu, which is drawn on the same display, so it gets the screen back for ten seconds.
+Battery (`07 b7`) and connection (`07 b5`) events are in the table so they don't count as that. On Quit the watcher releases the display. Identical frames are not sent
 twice. Checked in the browser preview (all transitions) and the frame format on hardware;
 **not yet seen on the real display: the FreeSeries screen, dark mode, and whether a button press
 on the base station really produces a message we can see** (the dial and volume do). A crash

@@ -17,6 +17,8 @@ pub enum Field {
     Online,
     Battery,
     MicMuted,
+    /// The headset's own volume knob.
+    Volume,
     /// The two sides of a ChatMix dial. Both full in the middle; turning it takes one side down.
     DialGame,
     DialChat,
@@ -30,6 +32,8 @@ pub enum Decode {
     IsNot(u8),
     /// A level in steps from 0 to this value.
     Steps(u8),
+    /// The same, counted downwards: this value is silence, 0 is full.
+    StepsDown(u8),
     /// A level from 0 to 100.
     Percent,
 }
@@ -99,10 +103,12 @@ pub struct State {
     /// 0 to 1.
     pub battery: Option<f32>,
     pub mic_muted: Option<bool>,
+    /// The headset's own volume, 0 to 1.
+    pub volume: Option<f32>,
     /// Game and chat side of the dial, each 0 to 1.
     pub dial: Option<(f32, f32)>,
-    /// Counts everything the device said without being asked: a knob turned, a button pressed.
-    /// Somebody is at the device, which matters to whoever is drawing on its display.
+    /// Counts what the device said without being asked that we can't read: somebody is doing
+    /// something at it that we don't follow, which matters to whoever is drawing on its display.
     pub activity: u32,
 }
 
@@ -165,12 +171,14 @@ pub fn decode(model: &Model, message: &[u8], state: &mut State) -> bool {
             Decode::Is(v) => (byte == v, 0.0),
             Decode::IsNot(v) => (byte != v, 0.0),
             Decode::Steps(max) => (false, (byte.min(max) as f32) / max as f32),
+            Decode::StepsDown(max) => (false, (max - byte.min(max)) as f32 / max as f32),
             Decode::Percent => (false, (byte.min(100) as f32) / 100.0),
         };
         match field {
             Field::Online => state.online = Some(flag),
             Field::MicMuted => state.mic_muted = Some(flag),
             Field::Battery => state.battery = Some(level),
+            Field::Volume => state.volume = Some(level),
             Field::DialGame => dial.0 = level,
             Field::DialChat => dial.1 = level,
         }
@@ -356,13 +364,11 @@ fn converse(model: &'static Model, link: &mut impl HidLink, shared: &Shared, pub
         }
         let n = link.read(&mut message, LISTEN)?;
         if n > 0 {
-            let unasked = !message[..n].starts_with(model.status_request); // an answer echoes its request
-            if unasked {
-                state.activity = state.activity.wrapping_add(1);
+            let understood = decode(model, &message[..n], &mut state);
+            if !understood && !message[..n].starts_with(model.status_request) {
+                state.activity = state.activity.wrapping_add(1); // an answer would echo its request: this is the device talking
             }
-            if decode(model, &message[..n], &mut state) || unasked {
-                publish(state.clone());
-            }
+            publish(state.clone());
         }
     }
 }

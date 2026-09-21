@@ -1219,7 +1219,7 @@ export function Mixer(p: {
 const SCREEN_MODES: { mode: ScreenMode; label: string; detail: string }[] = [
   { mode: "stock", label: "The headset's own screen", detail: "FreeSeries only draws on it while you turn the dial." },
   { mode: "ours", label: "FreeSeries screen", detail: "The time, the battery and the sound you have on." },
-  { mode: "off", label: "Dark", detail: "Nothing, until you touch the dial or a button." },
+  { mode: "off", label: "Dark", detail: "Nothing, until you turn a knob." },
 ];
 
 /**
@@ -1366,8 +1366,8 @@ export function Plugins(p: {
           </ul>
           <p className="hint hint-below">
             An OLED keeps a ghost of whatever sits still on it for months. FreeSeries can only protect the screen while it is the one drawing:
-            with the headset's own screen selected, that is up to the headset. Touch the dial or a button and the headset gets its screen back
-            for ten seconds, so its own menu stays usable.
+            with the headset's own screen selected, that is up to the headset. The dial and the volume knob show up on the FreeSeries screen;
+            anything else you do on the headset gives it its own screen back for ten seconds, so its menu stays usable.
           </p>
         </>
       )}
