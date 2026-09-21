@@ -29,7 +29,7 @@ export interface Saved {
   hotkeys: boolean;
   /** Mixer settings by channel key ("main", "chat", ...). */
   channels: Record<string, SavedChannel>;
-  /** Game / Chat balance: -1 all game, 0 both, +1 all chat. */
+  /** Balance between the main channel and the second one (Game / Media): -1 all game, 0 both, +1 all of the other. */
   balance: number;
   bypass: boolean;
   library: NamedPreset[];

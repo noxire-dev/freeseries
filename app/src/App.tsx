@@ -98,7 +98,8 @@ export default function App(p: {
   // Sliders are positions; gains are their square, which is closer to how loudness is heard.
   const gainOf = (key: string) => {
     const c = mixer[key] ?? DEFAULT_CHANNEL;
-    const pull = key === "chat" ? Math.min(0, balance) : key === "main" ? Math.min(0, -balance) : 0; // the balance only ever turns one side down
+    // The balance sits between the main channel and the second one, and only ever turns one side down.
+    const pull = key === channels[1]?.key ? Math.min(0, balance) : key === "main" ? Math.min(0, -balance) : 0;
     return c.muted ? 0 : (c.volume * (1 + pull)) ** 2;
   };
   const sounds = [...BUILTIN, ...library];

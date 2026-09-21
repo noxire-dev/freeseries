@@ -1019,8 +1019,8 @@ export function Mixer(p: {
       .then(p.onRefresh, (e) => setError(String(e)))
       .finally(() => setAdding(false));
   };
-  const hasChat = p.channels.some((c) => c.key === "chat");
-  const nextChannel = !hasChat ? "chat" : !p.channels.some((c) => c.key === "media") ? "media" : null;
+  const second = p.channels[1]; // the other side of the balance
+  const nextChannel = ["media", "chat"].find((key) => !p.channels.some((c) => c.key === key)) ?? null;
 
   return (
     <div className="console">
@@ -1133,9 +1133,9 @@ export function Mixer(p: {
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
             <strong>{adding ? "Waiting for Windows…" : `Add a ${nextChannel} channel`}</strong>
             <span>
-              {nextChannel === "chat"
-                ? "Its own volume and EQ for voice chat, and a Game and chat balance."
-                : "A third device, for music and video."}{" "}
+              {nextChannel === "media"
+                ? "Its own volume and EQ for music and video, and a Game and media balance."
+                : "A third device, for voice chat."}{" "}
               Windows asks for permission once.
             </span>
           </button>
@@ -1153,7 +1153,7 @@ export function Mixer(p: {
         )}
       </div>
 
-      {hasChat && (
+      {second && (
         <label className="crossfade">
           <span style={{ color: channelColor("main") }}>Game</span>
           <input
@@ -1164,10 +1164,10 @@ export function Mixer(p: {
             value={p.balance}
             onChange={(e) => p.onBalance(Math.abs(e.target.valueAsNumber) < 0.06 ? 0 : e.target.valueAsNumber)}
             onDoubleClick={() => p.onBalance(0)}
-            aria-label="Game and chat balance"
+            aria-label={`Game and ${second.label} balance`}
             title="Towards one side, the other gets quieter. Double-click to centre."
           />
-          <span style={{ color: channelColor("chat") }}>Chat</span>
+          <span style={{ color: channelColor(second.key) }}>{second.label}</span>
         </label>
       )}
       {error && <p className="notice">{error}</p>}

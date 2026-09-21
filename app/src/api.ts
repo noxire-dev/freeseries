@@ -42,7 +42,7 @@ export interface SetupApi {
   installDevice(): Promise<string[]>;
   /** Names the device's endpoint "freeseries". No prompt. */
   nameDevice(): Promise<string[]>;
-  /** Installs the virtual device for one more channel (Chat, then Media). Windows asks for permission. */
+  /** Installs the virtual device for one more channel (Media, then Chat). Windows asks for permission. */
   addChannelDevice(): Promise<string[]>;
   openSoundSettings(): Promise<void>;
   /** Id of the output Windows plays to by default. */
@@ -228,7 +228,7 @@ export async function tauriWindow(): Promise<WindowApi> {
 }
 
 // Browser preview state. `?fresh` previews a PC where nothing is set up yet.
-const preview = { installed: !location.search.includes("fresh"), isDefault: !location.search.includes("fresh"), chat: location.search.includes("chat") };
+const preview = { installed: !location.search.includes("fresh"), isDefault: !location.search.includes("fresh"), media: location.search.includes("media") };
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export const mockSetup = (): SetupApi => ({
@@ -240,8 +240,8 @@ export const mockSetup = (): SetupApi => ({
   nameDevice: async () => ["endpoint: 'Speakers' -> 'freeseries'"],
   addChannelDevice: async () => {
     await wait(1400);
-    preview.chat = true;
-    return ["driver installed", "endpoint: 'Speakers' -> 'freeseries Chat'"];
+    preview.media = true;
+    return ["driver installed", "endpoint: 'Speakers' -> 'freeseries Media'"];
   },
   openSoundSettings: async () => void wait(2500).then(() => (preview.isDefault = true)), // "the user" picks it
   defaultOutput: async () => (preview.installed && preview.isDefault ? "wasapi:fx" : "wasapi:rtk"),
@@ -254,7 +254,7 @@ export function mockEngine(): EngineApi {
   return {
     listOutputs: async () => [
       ...(preview.installed ? [{ id: "wasapi:fx", name: "freeseries (FxSound Audio Enhancer)", channels: 2, sampleRate: 48000 }] : []),
-      ...(preview.installed && preview.chat ? [{ id: "wasapi:fx2", name: "freeseries Chat (2- FxSound Audio Enhancer)", channels: 2, sampleRate: 48000 }] : []),
+      ...(preview.installed && preview.media ? [{ id: "wasapi:fx2", name: "freeseries Media (2- FxSound Audio Enhancer)", channels: 2, sampleRate: 48000 }] : []),
       { id: "wasapi:hdmi", name: "Odyssey G65B (NVIDIA High Definition Audio)", channels: 2, sampleRate: 48000 },
       { id: "wasapi:rtk", name: "Speakers (Realtek(R) Audio)", channels: 2, sampleRate: 48000 },
       { id: "wasapi:arctis", name: "Headphones (Arctis Nova Pro Wireless)", channels: 2, sampleRate: 48000 },
@@ -269,8 +269,8 @@ export function mockEngine(): EngineApi {
       if (state.status.state !== "running") return {};
       const t = performance.now() / 1000;
       const main = 0.35 + 0.25 * Math.abs(Math.sin(t * 5.3)) * Math.abs(Math.sin(t * 0.9));
-      const chat = Math.sin(t * 0.6) > 0 ? 0.12 + 0.2 * Math.abs(Math.sin(t * 9)) : 0.002;
-      return { main, chat, media: 0, out: Math.min(1, main + chat) };
+      const media = Math.sin(t * 0.6) > 0 ? 0.12 + 0.2 * Math.abs(Math.sin(t * 9)) : 0.002;
+      return { main, media, chat: 0, out: Math.min(1, main + media) };
     },
     // Something that moves like music: a pink-ish slope, a bass pulse, a wandering presence bump.
     spectrum: async (bands) => {

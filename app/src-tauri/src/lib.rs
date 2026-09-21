@@ -159,7 +159,7 @@ fn name_device(setup: State<Box<dyn Setup>>) -> Result<Vec<String>, String> {
     setup.name_device()
 }
 
-/// Installs the virtual device behind one more channel (Chat, Media). Shows a UAC prompt.
+/// Installs the virtual device behind one more channel (Media, then Chat). Shows a UAC prompt.
 #[tauri::command(async)]
 fn add_channel_device(setup: State<Box<dyn Setup>>) -> Result<Vec<String>, String> {
     setup.add_channel_device()

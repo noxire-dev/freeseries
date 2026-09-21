@@ -10,7 +10,7 @@ param(
     [Parameter(Mandatory = $true)][string]$Pkg,
     [Parameter(Mandatory = $true)][string]$Result,
     # One name per driver instance, handed out in this order to endpoints that don't have one yet.
-    [string[]]$Names = @("freeseries", "freeseries Chat", "freeseries Media"),
+    [string[]]$Names = @("freeseries", "freeseries Media", "freeseries Chat"),
     [switch]$DryRun,
     [switch]$RenameOnly,
     [switch]$AddInstance

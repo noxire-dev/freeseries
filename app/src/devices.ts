@@ -8,7 +8,7 @@ const VIRTUAL = /fxsound|cable input/i;
 export const isVirtualDevice = (device: Device): boolean => VIRTUAL.test(device.name);
 
 // With more than one instance of the driver installed (channels), the main one is the endpoint
-// setup named plain "freeseries"; "freeseries Chat" and the like are not what apps play into by default.
+// setup named plain "freeseries"; "freeseries Media" and the like are not what apps play into by default.
 const MAIN = /^freeseries \(/i;
 
 export const findVirtualDevice = (devices: Device[]): Device | undefined =>
@@ -18,7 +18,7 @@ export const findVirtualDevice = (devices: Device[]): Device | undefined =>
 export const shortName = (name: string): string => name.match(/\((?:\d+- )?(.+)\)$/)?.[1] ?? name;
 
 export interface VirtualChannel {
-  /** Stable key settings are stored under: "main", "chat", "media". */
+  /** Stable key settings are stored under: "main", "media", "chat". */
   key: string;
   /** What the user calls it. The main device is where games go. */
   label: string;
