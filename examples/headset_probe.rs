@@ -88,8 +88,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     send(&[0x06, 0x8D, 0x01])?;
     send(&[0x06, 0x49, 0x01])?;
     listen(Duration::from_secs(seconds));
-    println!("software ChatMix off (06 49 00, 06 8d 00)");
-    send(&[0x06, 0x49, 0x00])?;
-    send(&[0x06, 0x8D, 0x00])?;
+    // Left ON on purpose: a running FreeSeries believes the dial is its own and only says so now
+    // and then; switching it off here left the station's ChatMix menu dead until the app noticed.
+    // `cargo run -- headset 1` switches it off cleanly if you want the hardware default back.
+    println!("done (software ChatMix left on)");
     Ok(())
 }

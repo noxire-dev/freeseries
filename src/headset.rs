@@ -206,6 +206,9 @@ pub trait HidTransport: Send + 'static {
 
 const POLL: Duration = Duration::from_secs(2);
 const LISTEN: Duration = Duration::from_millis(100);
+/// The dial's mode lives in the device, and anything else that talks to it (a vendor app, our own
+/// probe) can switch it back. So "the dial is ours" is said again this often, not just once.
+const REASSERT: Duration = Duration::from_secs(30);
 
 /// Work for the watcher's thread, which is the only one that talks to the device.
 enum Order {
@@ -333,13 +336,15 @@ fn send(model: &Model, link: &mut impl HidLink, commands: &[&[u8]]) -> Result<()
 fn converse(model: &'static Model, link: &mut impl HidLink, shared: &Shared, publish: &impl Fn(State)) -> Result<(), String> {
     let mut state = State { model: Some(model.name), ..State::default() };
     let mut dial_is_ours = false;
+    let mut dial_said = Instant::now();
     let mut asked: Option<Instant> = None;
     let mut message = vec![0u8; model.report_length];
     loop {
         let stopping = shared.stop.load(Ordering::Relaxed);
         let dial_wanted = !stopping && !model.dial_on.is_empty() && shared.dial_wanted.load(Ordering::Relaxed);
-        if dial_wanted != dial_is_ours {
+        if dial_wanted != dial_is_ours || (dial_wanted && dial_said.elapsed() >= REASSERT) {
             send(model, link, if dial_wanted { model.dial_on } else { model.dial_off })?;
+            dial_said = Instant::now();
             dial_is_ours = dial_wanted;
             if !dial_wanted {
                 state.dial = None;
