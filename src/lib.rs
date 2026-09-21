@@ -1,3 +1,4 @@
+pub mod default_output;
 pub mod engine;
 pub mod headset;
 pub mod headsets;

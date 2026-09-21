@@ -467,6 +467,9 @@ export function Devices(p: {
               <span className="row-title">{p.detected.name.replace(/ \(.*\)$/, "")}</span>
               {defaultId === undefined ? null : defaultId === p.detected.id ? (
                 <span className="badge">Default</span>
+              ) : p.status.state === "stopped" ? (
+                // While audio is stopped FreeSeries points Windows at your own output, so nothing goes silent.
+                <span className="row-detail">Takes over when audio starts</span>
               ) : (
                 <>
                   <span className="row-detail">Not your default yet</span>
@@ -478,8 +481,9 @@ export function Devices(p: {
             </li>
           </ul>
           <p className="hint hint-below">
-            Everything on your PC plays into this device, and FreeSeries passes it on to what you listen on, with your EQ. Keep it as the default
-            output in Windows, and turn spatial sound on for it if you use Atmos or DTS.
+            Everything on your PC plays into this device, and FreeSeries passes it on to what you listen on, with your EQ. It is the Windows
+            default while audio runs; when you stop or quit, or if FreeSeries ever crashes, Windows goes back to playing straight to your
+            output. Turn spatial sound on for it if you use Atmos or DTS.
             {extras.length > 0 &&
               ` Windows also lists ${extras.join(" and ")}: ${extras.length === 1 ? "that is a channel" : "those are channels"}, not something to pick as your default. Apps get onto a channel in the Mixer.`}
           </p>

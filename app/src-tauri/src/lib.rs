@@ -1,5 +1,6 @@
 mod agent;
 mod autostart;
+mod handback;
 mod setup;
 
 use autostart::{Autostart, TaskScheduler};
@@ -285,12 +286,66 @@ fn set_starts_with_windows(app: State<App>, enabled: bool) -> Result<(), String>
     Ok(())
 }
 
+/// Our virtual devices: every endpoint of the FxSound driver.
+fn virtual_devices() -> Vec<DeviceInfo> {
+    Wasapi.outputs().unwrap_or_default().into_iter().filter(|d| d.name.to_lowercase().contains("fxsound")).collect()
+}
+
+/// The one Windows should play into: setup names it plain "FreeSeries", the channels "FreeSeries Media" and so on.
+fn main_virtual_device(ours: &[DeviceInfo]) -> Option<String> {
+    ours.iter().find(|d| d.name.to_lowercase().starts_with("freeseries (")).or(ours.first()).map(|d| d.id.clone())
+}
+
+type WindowsHandback = handback::Handback<freeseries::default_output::WindowsDefaults, handback::FileStore>;
+
+/// Keeps the Windows default where the engine is: ours while it plays, the real output when it doesn't.
+/// A development build leaves the default alone: it belongs to the installed app running next to it.
+fn follow_engine(app: tauri::AppHandle, state_file: std::path::PathBuf) {
+    if cfg!(debug_assertions) {
+        return;
+    }
+    // Outlives us, so it can act when we can't: a crash, End task.
+    if let Ok(exe) = std::env::current_exe() {
+        let spawned = std::process::Command::new(exe).arg(handback::WATCHDOG).arg(std::process::id().to_string()).arg(&state_file).creation_flags(0x0800_0000).spawn(); // CREATE_NO_WINDOW
+        if let Err(e) = spawned {
+            log::warn!("no watchdog: a crash would leave Windows playing into nothing ({e})");
+        }
+    }
+    std::thread::spawn(move || {
+        let handback = WindowsHandback { defaults: freeseries::default_output::WindowsDefaults, store: handback::FileStore(state_file) };
+        let mut playing_on: Option<String> = None;
+        loop {
+            let now = match app.state::<App>().engine.status() {
+                Status::Running { output } => Some(output),
+                Status::Stopped => None,
+                Status::Reconnecting { .. } => playing_on.clone(), // a hiccup, not an absence
+            };
+            if now != playing_on {
+                let ours = virtual_devices();
+                match &now {
+                    Some(output) => handback.running(output, main_virtual_device(&ours).as_deref()),
+                    None => handback.away(&ours.into_iter().map(|d| d.id).collect::<Vec<_>>()),
+                }
+                playing_on = now;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+    });
+}
+
+/// `--watchdog <pid> <state file>`: waits for the app to be gone, then makes sure Windows isn't left playing into our device.
+fn watchdog(pid: &str, state_file: &str) {
+    freeseries::default_output::wait_for_exit(pid.parse().unwrap_or(0));
+    let ours: Vec<String> = virtual_devices().into_iter().map(|d| d.id).collect();
+    WindowsHandback { defaults: freeseries::default_output::WindowsDefaults, store: handback::FileStore(state_file.into()) }.away(&ours);
+}
+
 /// Quitting takes the engine away, and with it everything that listens to the virtual devices. Apps
 /// the Mixer moved onto a channel are pinned there by Windows, so they would stay silent even after
 /// the user points Windows back at their headphones. They are handed back first; the UI remembers
 /// where they belong and puts them back when FreeSeries runs again.
 fn release_apps(app: &tauri::AppHandle) {
-    let ours: Vec<String> = Wasapi.outputs().unwrap_or_default().into_iter().filter(|d| d.name.to_lowercase().contains("fxsound")).map(|d| d.id).collect();
+    let ours: Vec<String> = virtual_devices().into_iter().map(|d| d.id).collect();
     match freeseries::routing::release(app.state::<Box<dyn AppRouting>>().inner().as_ref(), &ours) {
         Ok(released) if !released.is_empty() => log::info!("quitting: handed back to the Windows default: {}", released.join(", ")),
         Ok(_) => {}
@@ -312,6 +367,12 @@ fn tray(app: &tauri::App) -> tauri::Result<()> {
             "open" => show_main(app),
             "quit" => {
                 release_apps(app);
+                if !cfg!(debug_assertions) {
+                    if let Ok(dir) = app.path().app_data_dir() {
+                        let ours: Vec<String> = virtual_devices().into_iter().map(|d| d.id).collect();
+                        WindowsHandback { defaults: freeseries::default_output::WindowsDefaults, store: handback::FileStore(dir.join(HANDBACK_FILE)) }.away(&ours);
+                    }
+                }
                 app.state::<Headset>().stop(); // gives the dial back to the hardware
                 app.exit(0);
             }
@@ -330,7 +391,15 @@ fn tray(app: &tauri::App) -> tauri::Result<()> {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+const HANDBACK_FILE: &str = "handback.json";
+
 pub fn run() {
+    let args: Vec<String> = std::env::args().collect();
+    if let [_, flag, pid, state_file] = args.as_slice() {
+        if flag == handback::WATCHDOG {
+            return watchdog(pid, state_file);
+        }
+    }
     // The headset watcher starts before the app exists (the engine needs it to know which outputs
     // are switched on), so its events wait for the handle.
     let events: std::sync::Arc<std::sync::OnceLock<tauri::AppHandle>> = Default::default();
@@ -406,6 +475,9 @@ pub fn run() {
         ])
         .setup(move |app| {
             let _ = events.set(app.handle().clone());
+            let data = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&data)?;
+            follow_engine(app.handle().clone(), data.join(HANDBACK_FILE));
             let resources = app.path().resource_dir()?.join("resources");
             let bridge = std::sync::Arc::new(UiBridge::default());
             let _ = bridge.app.set(app.handle().clone());

@@ -17,6 +17,10 @@ impl log::Log for Stderr {
     fn flush(&self) {}
 }
 
+fn device_id(devices: &[freeseries::engine::DeviceInfo], number: &str) -> Result<String, Box<dyn Error>> {
+    Ok(devices.get(number.parse::<usize>()?).ok_or("no such device")?.id.clone())
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     log::set_logger(&Stderr).map_err(|e| e.to_string())?;
     log::set_max_level(log::LevelFilter::Info);
@@ -39,6 +43,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         WindowsRouting.assign(args[1].parse()?, target.as_deref())?;
         return Ok(());
     }
+    // `default`: what Windows plays to, per role. `default <device#>`: point all three roles at a device.
+    if args.first().map(String::as_str) == Some("default") {
+        use freeseries::default_output::{DefaultOutput, WindowsDefaults, ROLES};
+        if let Some(target) = args.get(1) {
+            let id = device_id(&devices, target)?;
+            for role in ROLES {
+                WindowsDefaults.set(role, &id)?;
+            }
+        }
+        for role in ROLES {
+            let now = WindowsDefaults.get(role);
+            println!("{role:?}: {}", now.as_ref().and_then(|id| devices.iter().find(|d| &d.id == id)).map_or(format!("{now:?}"), |d| d.name.clone()));
+        }
+        return Ok(());
+    }
     if args.first().map(String::as_str) == Some("headset") {
         // Follows the headset for a while: switch it on and off, press mute, turn the dial.
         use freeseries::headset::{Headset, Usb};
@@ -50,7 +69,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     if args.first().map(String::as_str) != Some("run") || args.len() < 3 {
         for (i, d) in devices.iter().enumerate() {
-            println!("{i}: {} ({} ch, {} Hz)", d.name, d.channels, d.sample_rate);
+            println!("{i}: {} ({} ch, {} Hz){}", d.name, d.channels, d.sample_rate, if args.first().map(String::as_str) == Some("ids") { format!("  {}", d.id) } else { String::new() });
         }
         println!("\nusage: freeseries run <source#>[,<source#>...] <target#> [ParametricEQ.txt]");
         return Ok(());
