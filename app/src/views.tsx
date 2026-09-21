@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { About, HeadsetState, AppsApi, AudioApp, AutoEqApi, AutoEqEntry, Band, Device, InfoApi, Kind, LogEntry, Preset, SetupApi, StartupApi, Status } from "./api";
+import type { About, HeadsetFeatures, HeadsetState, AppsApi, AudioApp, AutoEqApi, AutoEqEntry, Band, Device, InfoApi, Kind, LogEntry, Preset, SetupApi, StartupApi, Status } from "./api";
 import EqGraph, { bandColor } from "./EqGraph";
 import { DB_RANGE, F_MAX, F_MIN, clamp, combine, formatDb, formatPreset, frequencies, totalGainDb } from "./eqmath";
 import { BUILTIN } from "./builtin";
@@ -650,10 +650,15 @@ export function Settings(p: {
   hotkeys: boolean;
   refusedHotkeys: string[];
   onHotkeys(enabled: boolean): void;
-  /** The headset FreeSeries recognised, if any. */
-  headset: string | null;
+  /** What the plugged-in headset can do. Null: none we know, and then it has no section here. */
+  headset: HeadsetFeatures | null;
   dial: boolean;
   onDial(enabled: boolean): void;
+  display: boolean;
+  onDisplay(enabled: boolean): void;
+  /** The user's choices, by "model:key". */
+  headsetSettings: Record<string, number>;
+  onHeadsetSetting(key: string, value: number): void;
   agent: { on: boolean; url: string | null; token: string; error: string | undefined };
   onAgent(enabled: boolean): void;
   onSetup(): void;
@@ -715,20 +720,53 @@ export function Settings(p: {
         ))}
       </ul>
 
+      {/* One section per headset FreeSeries knows, built from what that headset's table says it can do. */}
       {p.headset && (
         <>
-          <h2>{p.headset}</h2>
+          <h2>{p.headset.model}</h2>
           <ul className="group">
-            <li>
-              <label className="row">
-                <span className="row-title">The ChatMix dial sets the Game and Media balance</span>
-                <input type="checkbox" role="switch" className="switch" checked={p.dial} onChange={(e) => p.onDial(e.target.checked)} />
-              </label>
-            </li>
+            {p.headset.dial && (
+              <li>
+                <label className="row">
+                  <span className="row-title">The ChatMix dial sets the Game and Media balance</span>
+                  <input type="checkbox" role="switch" className="switch" checked={p.dial} onChange={(e) => p.onDial(e.target.checked)} />
+                </label>
+              </li>
+            )}
+            {p.headset.dial && p.headset.display && (
+              <li>
+                <label className={`row${p.dial ? "" : " is-unused"}`}>
+                  <span className="row-title">Show the balance on its display while the dial turns</span>
+                  <input type="checkbox" role="switch" className="switch" checked={p.display} disabled={!p.dial} onChange={(e) => p.onDisplay(e.target.checked)} />
+                </label>
+              </li>
+            )}
+            {p.headset.settings.map((s) => {
+              const value = p.headsetSettings[`${p.headset!.model}:${s.key}`];
+              return (
+                <li key={s.key}>
+                  <label className="row">
+                    <span className="row-title">{s.label}</span>
+                    <select value={value ?? ""} onChange={(e) => p.onHeadsetSetting(s.key, Number(e.target.value))}>
+                      {/* The headset doesn't say what it is set to, so until the user picks, we don't pretend to know. */}
+                      {value === undefined && <option value="">As it is</option>}
+                      {Array.from({ length: s.max - s.min + 1 }, (_, i) => (
+                        <option key={i} value={s.min + i}>
+                          {s.names[i] ?? s.min + i}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </li>
+              );
+            })}
           </ul>
-          <p className="hint hint-below">
-            Needs a second channel (Mixer, Add a media channel). SteelSeries GG wants the dial for itself, so close it if the dial doesn't respond.
-          </p>
+          {p.headset.dial && (
+            <p className="hint hint-below">
+              The dial needs a second channel (Mixer, Add a media channel). SteelSeries GG wants the dial for itself, so close it if the dial
+              doesn't respond.
+            </p>
+          )}
         </>
       )}
 

@@ -184,6 +184,29 @@ fn headset_state(headset: State<Headset>) -> freeseries::headset::State {
     headset.state()
 }
 
+/// What the plugged-in headset can do, so Settings can build itself from it.
+#[tauri::command]
+fn headset_features(headset: State<Headset>) -> Option<freeseries::headset::Features> {
+    headset.features()
+}
+
+#[tauri::command]
+fn headset_set(headset: State<Headset>, key: String, value: u8) -> Result<(), String> {
+    headset.set(&key, value)
+}
+
+/// A frame for the headset's display: one bit per pixel, row by row, most significant bit first.
+#[tauri::command]
+fn display_draw(headset: State<Headset>, bits: Vec<u8>) -> Result<(), String> {
+    let pixels: Vec<bool> = bits.iter().flat_map(|byte| (0..8).map(move |i| byte & (0x80 >> i) != 0)).collect();
+    headset.draw(&pixels)
+}
+
+#[tauri::command]
+fn display_release(headset: State<Headset>) -> Result<(), String> {
+    headset.release_display()
+}
+
 /// Have the headset's ChatMix dial report to us (it then drives the Game / Media balance).
 #[tauri::command]
 fn set_dial(headset: State<Headset>, enabled: bool) {
@@ -470,6 +493,10 @@ pub fn run() {
             set_hotkeys,
             set_agent,
             headset_state,
+            headset_features,
+            headset_set,
+            display_draw,
+            display_release,
             set_dial,
             agent_reply
         ])

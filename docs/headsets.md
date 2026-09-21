@@ -102,5 +102,27 @@ table. There is a third collection, `mi_03` (consumer control), that we don't us
    not paste code or data files from GPL projects without keeping their notices (see above), and
    nothing derived from a vendor's decrypted files.
 
-Writes (sidetone, ANC, hardware EQ) and the OLED are not in the table yet: add a `settings` list
-when the first one is built, not before.
+## What a table can declare, and what the app does with it
+
+A headset has no code of its own and no entry in the UI of its own. Its table says what it can do,
+`Model::features()` hands that to the app, and the Settings page builds that headset's section from
+it, only while the headset is plugged in. Someone without an Arctis never sees an Arctis setting.
+
+- **A dial** (`dial_on` / `dial_off`): a switch "the dial sets the Game and Media balance".
+- **Settings** (`settings`): one command and a value range each, optionally with names for the
+  values ("Off", "Transparent", "On"). Shown as a picker. Headsets don't report most of these, so
+  the app stores the user's choice (`headsetSettings`, by "model:key"), shows "As it is" until they
+  pick, and sends every stored choice again whenever the headset appears. The Nova Pro has sidetone
+  (`06 39`, 0-3) and noise cancelling (`06 bd`, 0-2): **neither has been tried on hardware yet.**
+- **A display** (`oled`): size, the feature-report length, the strip width, the draw and release
+  commands. `headset::frames` packs a row-by-row frame into the reports (tested byte for byte with
+  a toy display). The app draws with a canvas, which brings fonts for free, thresholds it to one
+  bit and sends it: today one picture, the balance while the dial turns, then the display goes
+  back to the headset after two seconds. The Nova Pro's frame format is ggoled's description;
+  `examples/oled_probe.rs` draws a test pattern and the base station accepted it.
+
+Only the watcher's thread talks to the device: `set`, `draw` and `release_display` queue an order
+for it. A frame nobody has seen yet is replaced by the next one rather than queued behind it.
+
+Still code rather than table: hardware EQ, and anything a device needs that these shapes don't
+cover. Add a shape when a second headset needs it, not before.

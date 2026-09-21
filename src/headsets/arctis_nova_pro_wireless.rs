@@ -7,7 +7,7 @@
 //! battery, mic mute and the dial confirmed on hardware too. The dial's events arrive on the
 //! second collection of interface 4, not where the answers do.
 
-use crate::headset::{Decode, Field, Model, Report};
+use crate::headset::{Decode, Field, Model, Oled, Report, Setting};
 use std::time::Duration;
 
 pub static MODEL: Model = Model {
@@ -33,6 +33,13 @@ pub static MODEL: Model = Model {
     // "Sonar is here", then software ChatMix. Without them the dial says nothing on a PC.
     dial_on: &[&[0x06, 0x8D, 0x01], &[0x06, 0x49, 0x01]],
     dial_off: &[&[0x06, 0x49, 0x00], &[0x06, 0x8D, 0x00]],
+    // Written, never read back: the app remembers the choice and sends it again when the headset appears.
+    settings: &[
+        Setting { key: "sidetone", label: "Sidetone (hear your own voice)", command: &[0x06, 0x39], min: 0, max: 3, names: &["Off", "Low", "Medium", "High"] },
+        Setting { key: "anc", label: "Noise cancelling", command: &[0x06, 0xBD], min: 0, max: 2, names: &["Off", "Transparent", "On"] },
+    ],
+    // The base station's screen. Frame format as documented by ggoled; drawn on real hardware with `examples/oled_probe.rs`.
+    oled: Some(Oled { width: 128, height: 64, report_length: 1024, strip: 64, draw: &[0x06, 0x93], release: &[0x06, 0x95] }),
     pace: Duration::from_millis(50),
 };
 

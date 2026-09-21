@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AgentApi, HeadsetApi, HeadsetState, AppsApi, AutoEqApi, Device, EngineApi, HotkeyApi, InfoApi, LogApi, LogEntry, Preset, SetupApi, StartupApi, Status, WindowApi } from "./api";
+import type { AgentApi, HeadsetApi, HeadsetFeatures, HeadsetState, AppsApi, AutoEqApi, Device, EngineApi, HotkeyApi, InfoApi, LogApi, LogEntry, Preset, SetupApi, StartupApi, Status, WindowApi } from "./api";
 import { findVirtualDevice, shortName, virtualChannels } from "./devices";
 import { BUILTIN } from "./builtin";
 import { createAgent } from "./agent";
@@ -22,6 +22,29 @@ const SECONDARY = new Set<View>(["settings"]);
 /** Pages reached from Settings keep it lit in the sidebar. */
 const UNDER_SETTINGS = new Set<View>(["log", "setup"]);
 const TITLES: Partial<Record<View, string>> = { log: "Log", setup: "Set up FreeSeries" };
+
+/** The balance as a picture for a 1-bit display: the two names, a track, and a knob where the dial stands. */
+function balanceFrame([width, height]: [number, number], balance: number, left: string, right: string): Uint8Array {
+  const canvas = Object.assign(document.createElement("canvas"), { width, height });
+  const g = canvas.getContext("2d", { willReadFrequently: true })!;
+  g.fillStyle = "#000";
+  g.fillRect(0, 0, width, height);
+  g.fillStyle = "#fff";
+  g.font = "bold 13px sans-serif";
+  g.textBaseline = "top";
+  g.fillText(left.toUpperCase(), 2, 6);
+  g.textAlign = "right";
+  g.fillText(right.toUpperCase(), width - 2, 6);
+  const [track, y] = [width - 16, Math.round(height * 0.62)];
+  g.fillRect(8, y, track, 2);
+  g.fillRect(8 + track / 2 - 1, y - 5, 2, 12); // the middle
+  const knob = 8 + ((balance + 1) / 2) * track;
+  g.fillRect(Math.round(knob) - 4, y - 9, 8, 20);
+  const rgba = g.getImageData(0, 0, width, height).data;
+  const bits = new Uint8Array(Math.ceil((width * height) / 8));
+  for (let i = 0; i < width * height; i++) if (rgba[i * 4] > 127) bits[i >> 3] |= 0x80 >> (i & 7);
+  return bits;
+}
 
 const STATUS_TEXT: Record<Status["state"], string> = { stopped: "Stopped", running: "Running", reconnecting: "Reconnecting…" };
 
@@ -59,6 +82,9 @@ export default function App(p: {
   const [assignments, setAssignments] = useState(saved.assignments);
   const [dialOn, setDialOn] = useState(saved.dial);
   const [headset, setHeadset] = useState<HeadsetState>();
+  const [features, setFeatures] = useState<HeadsetFeatures | null>(null);
+  const [displayOn, setDisplayOn] = useState(saved.display);
+  const [headsetSettings, setHeadsetSettings] = useState(saved.headsetSettings);
   const [agentOn, setAgentOn] = useState(saved.agent);
   const [agentToken, setAgentToken] = useState(saved.agentToken);
   const [agentUrl, setAgentUrl] = useState<string | null>(null);
@@ -86,8 +112,8 @@ export default function App(p: {
   }, [engine]);
 
   useEffect(
-    () => settings.save({ source, outputs, running, autoSwitch, hotkeys: hotkeysOn, channels: mixer, balance, bypass, library, assignments, dial: dialOn, agent: agentOn, agentToken }),
-    [source, outputs, running, autoSwitch, hotkeysOn, mixer, balance, bypass, library, assignments, dialOn, agentOn, agentToken],
+    () => settings.save({ source, outputs, running, autoSwitch, hotkeys: hotkeysOn, channels: mixer, balance, bypass, library, assignments, dial: dialOn, display: displayOn, headsetSettings, agent: agentOn, agentToken }),
+    [source, outputs, running, autoSwitch, hotkeysOn, mixer, balance, bypass, library, assignments, dialOn, displayOn, headsetSettings, agentOn, agentToken],
   );
   useEffect(() => void p.hotkeys.setEnabled(hotkeysOn).then(setRefused, () => {}), [p.hotkeys, hotkeysOn]);
 
@@ -164,12 +190,37 @@ export default function App(p: {
     const stop = p.headset.subscribe(setHeadset);
     return () => void stop.then((unsubscribe) => unsubscribe());
   }, [p.headset]);
+  // A headset appeared (or another one): learn what it can do, and send it the user's choices again, since it doesn't report them.
+  const model = headset?.model ?? null;
+  const chosen = useRef(headsetSettings);
+  chosen.current = headsetSettings;
+  useEffect(() => {
+    if (!model) return setFeatures(null);
+    p.headset.features().then((found) => {
+      setFeatures(found);
+      for (const s of found?.settings ?? []) {
+        const value = chosen.current[`${found!.model}:${s.key}`];
+        if (value !== undefined) p.headset.set(s.key, value).catch(() => {});
+      }
+    }, () => {});
+  }, [p.headset, model]);
+
   const [dialGame, dialChat] = headset?.dial ?? [null, null];
   useEffect(() => {
     if (dialGame === null || dialChat === null || !dialOn) return;
     const turned = dialChat - dialGame; // both sides full in the middle; turning it takes one side down
     setBalance(Math.abs(turned) < 0.03 ? 0 : turned);
   }, [dialGame, dialChat, dialOn]);
+
+  // While the dial turns, the headset's own display shows where the balance stands; then it gets its screen back.
+  const second = channels[1]?.label;
+  const releaseTimer = useRef(0);
+  useEffect(() => {
+    if (dialGame === null || dialChat === null || !dialOn || !displayOn || !features?.display || !second) return;
+    p.headset.draw(balanceFrame(features.display, dialChat - dialGame, "Game", second)).catch(() => {});
+    clearTimeout(releaseTimer.current);
+    releaseTimer.current = window.setTimeout(() => p.headset.releaseDisplay().catch(() => {}), 2000);
+  }, [dialGame, dialChat, dialOn, displayOn, features, second, p.headset]);
 
   // Stable identities: the graph restarts its analyser loop when these change.
   const spectrum = useCallback(() => engine.spectrum(96), [engine]);
@@ -441,9 +492,17 @@ export default function App(p: {
             hotkeys={hotkeysOn}
             refusedHotkeys={refused}
             onHotkeys={setHotkeysOn}
-            headset={headset?.model ?? null}
+            headset={features}
             dial={dialOn}
             onDial={setDialOn}
+            display={displayOn}
+            onDisplay={setDisplayOn}
+            headsetSettings={headsetSettings}
+            onHeadsetSetting={(key, value) => {
+              if (!features) return;
+              setHeadsetSettings({ ...headsetSettings, [`${features.model}:${key}`]: value });
+              p.headset.set(key, value).catch(() => {});
+            }}
             agent={{ on: agentOn, url: agentUrl, token: agentToken, error: agentError }}
             onAgent={(on) => {
               if (on && !agentToken) setAgentToken(crypto.randomUUID().replace(/-/g, ""));

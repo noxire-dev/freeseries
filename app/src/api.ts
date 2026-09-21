@@ -66,8 +66,25 @@ export interface HeadsetState {
   dial: [number, number] | null;
 }
 
+/** What a headset model can do. The Settings page builds that headset's section from this. */
+export interface HeadsetFeatures {
+  model: string;
+  dial: boolean;
+  /** `names`: what the values are called, from `min` up. Empty: a plain level. */
+  settings: { key: string; label: string; min: number; max: number; names: string[] }[];
+  /** Width and height of a 1-bit display we may draw on. */
+  display: [number, number] | null;
+}
+
 export interface HeadsetApi {
   state(): Promise<HeadsetState>;
+  /** Null: no headset we know is plugged in. */
+  features(): Promise<HeadsetFeatures | null>;
+  set(key: string, value: number): Promise<void>;
+  /** One bit per pixel, row by row, most significant bit first. */
+  draw(bits: Uint8Array): Promise<void>;
+  /** Gives the display back to the headset's own UI. */
+  releaseDisplay(): Promise<void>;
   /** Have the dial report its position to us instead of the hardware using it by itself. */
   setDial(enabled: boolean): Promise<void>;
   subscribe(onChange: (state: HeadsetState) => void): Promise<() => void>;
@@ -204,6 +221,10 @@ export async function tauriHeadset(): Promise<HeadsetApi> {
   const { listen } = await import("@tauri-apps/api/event");
   return {
     state: () => invoke("headset_state"),
+    features: () => invoke("headset_features"),
+    set: (key, value) => invoke("headset_set", { key, value }),
+    draw: (bits) => invoke("display_draw", { bits: Array.from(bits) }),
+    releaseDisplay: () => invoke("display_release"),
     setDial: (enabled) => invoke("set_dial", { enabled }),
     subscribe: (onChange) => listen<HeadsetState>("headset", (e) => onChange(e.payload)),
   };
@@ -341,6 +362,18 @@ export const mockHeadset = (): HeadsetApi => {
   };
   return {
     state: async () => state,
+    features: async () => ({
+      model: "Arctis Nova Pro Wireless",
+      dial: true,
+      settings: [
+        { key: "sidetone", label: "Sidetone (hear your own voice)", min: 0, max: 3, names: ["Off", "Low", "Medium", "High"] },
+        { key: "anc", label: "Noise cancelling", min: 0, max: 2, names: ["Off", "Transparent", "On"] },
+      ],
+      display: [128, 64],
+    }),
+    set: async (key, value) => void ((window as any).headsetWrites = [...((window as any).headsetWrites ?? []), [key, value]]),
+    draw: async (bits) => void ((window as any).lastFrame = bits),
+    releaseDisplay: async () => void ((window as any).lastFrame = null),
     setDial: async () => {},
     subscribe: async (onChange) => {
       const listener = { onChange };
