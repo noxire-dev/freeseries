@@ -55,6 +55,7 @@ export default function App(p: {
   const [refused, setRefused] = useState<string[]>([]);
   const [bypass, setBypass] = useState(saved.bypass);
   const [library, setLibrary] = useState(saved.library);
+  const [assignments, setAssignments] = useState(saved.assignments);
   const [agentOn, setAgentOn] = useState(saved.agent);
   const [agentToken, setAgentToken] = useState(saved.agentToken);
   const [agentUrl, setAgentUrl] = useState<string | null>(null);
@@ -82,8 +83,8 @@ export default function App(p: {
   }, [engine]);
 
   useEffect(
-    () => settings.save({ source, outputs, running, autoSwitch, hotkeys: hotkeysOn, channels: mixer, balance, bypass, library, agent: agentOn, agentToken }),
-    [source, outputs, running, autoSwitch, hotkeysOn, mixer, balance, bypass, library, agentOn, agentToken],
+    () => settings.save({ source, outputs, running, autoSwitch, hotkeys: hotkeysOn, channels: mixer, balance, bypass, library, assignments, agent: agentOn, agentToken }),
+    [source, outputs, running, autoSwitch, hotkeysOn, mixer, balance, bypass, library, assignments, agentOn, agentToken],
   );
   useEffect(() => void p.hotkeys.setEnabled(hotkeysOn).then(setRefused, () => {}), [p.hotkeys, hotkeysOn]);
 
@@ -121,6 +122,36 @@ export default function App(p: {
     const now = latest.current;
     engine.setPlan(shape ? { channels: now.plannedChannels, outputs: now.planned.map((o) => ({ id: o.id, preset: o.correction?.preset ?? FLAT })) } : null);
   }, [engine, shape]);
+
+  // Windows keeps an app pinned to a channel's device whether FreeSeries runs or not, and without the
+  // engine that device is a dead end. So quitting hands every app back to the Windows default
+  // (`release_apps` in lib.rs), and this puts them where they belong whenever audio is running:
+  // apps that were there before the quit, and apps that start later.
+  const placing = useRef({ assignments, channels, adopted: false });
+  placing.current.assignments = assignments;
+  placing.current.channels = channels;
+  const audioOn = status.state === "running";
+  useEffect(() => {
+    if (!audioOn) return;
+    const place = async () => {
+      const found = await p.apps.list().catch(() => []);
+      const now = placing.current;
+      const extra = now.channels.slice(1);
+      // Pins from before FreeSeries kept track (or made in Windows' own volume mixer) are taken over once.
+      if (!now.adopted && found.length) {
+        now.adopted = true;
+        const adopted = Object.fromEntries(found.flatMap((a) => (extra.find((c) => c.device.id === a.device) && !now.assignments[a.name] ? [[a.name, extra.find((c) => c.device.id === a.device)!.key]] : [])));
+        if (Object.keys(adopted).length) setAssignments((old) => ({ ...adopted, ...old }));
+      }
+      for (const app of found) {
+        const target = extra.find((c) => c.key === now.assignments[app.name])?.device.id;
+        if (target && app.device !== target) p.apps.assign(app.pid, target).catch(() => {}); // not ready yet: the next round tries again
+      }
+    };
+    place();
+    const poll = setInterval(place, 5000);
+    return () => clearInterval(poll);
+  }, [p.apps, audioOn]);
 
   // Stable identities: the graph restarts its analyser loop when these change.
   const spectrum = useCallback(() => engine.spectrum(96), [engine]);
@@ -354,6 +385,7 @@ export default function App(p: {
             setup={p.setup}
             onBalance={setBalance}
             onChannel={(key, next) => setMixer({ ...mixer, [key]: next })}
+            onAssign={(name, key) => setAssignments(({ [name]: _, ...rest }) => (key === "main" ? rest : { ...rest, [name]: key }))}
             onEdit={(key) => {
               setEditingKey(key);
               setView("equalizer");

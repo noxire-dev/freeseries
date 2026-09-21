@@ -45,6 +45,19 @@ pub trait AppRouting: Send + Sync {
     fn icon(&self, path: &str) -> Option<Icon>;
 }
 
+/// Lets every app that is pinned to one of `devices` follow the Windows default again, and names
+/// them. For when the engine goes away: a pin outlives us, and an app pinned to a virtual device
+/// nobody listens to is silent until someone finds the setting in Windows.
+pub fn release(routing: &dyn AppRouting, devices: &[String]) -> Result<Vec<String>, String> {
+    let mut released = Vec::new();
+    for app in routing.apps()? {
+        if app.device.as_ref().is_some_and(|pinned| devices.contains(pinned)) && routing.assign(app.pid, None).is_ok() && !released.contains(&app.name) {
+            released.push(app.name);
+        }
+    }
+    Ok(released)
+}
+
 pub struct WindowsRouting;
 
 const DEVICE_ID_PREFIX: &str = "wasapi:"; // how cpal spells a device id; Windows' own id follows
@@ -270,6 +283,32 @@ fn icon_of(path: &str) -> Option<Icon> {
 
 #[cfg(test)]
 mod tests {
+    use super::{AppRouting, AudioApp, Icon};
+    use std::sync::Mutex;
+
+    struct Fake(Mutex<Vec<AudioApp>>);
+    impl AppRouting for Fake {
+        fn apps(&self) -> Result<Vec<AudioApp>, String> {
+            Ok(self.0.lock().unwrap().clone())
+        }
+        fn assign(&self, pid: u32, device: Option<&str>) -> Result<(), String> {
+            self.0.lock().unwrap().iter_mut().filter(|a| a.pid == pid).for_each(|a| a.device = device.map(str::to_string));
+            Ok(())
+        }
+        fn icon(&self, _: &str) -> Option<Icon> {
+            None
+        }
+    }
+
+    #[test]
+    fn release_frees_only_the_apps_on_our_devices() {
+        let app = |pid, name: &str, device: Option<&str>| AudioApp { pid, name: name.into(), path: String::new(), device: device.map(str::to_string) };
+        let fake = Fake(Mutex::new(vec![app(1, "Discord", Some("media")), app(2, "Discord", Some("media")), app(3, "Game", None), app(4, "Spotify", Some("speakers"))]));
+        assert_eq!(super::release(&fake, &["media".into(), "main".into()]).unwrap(), ["Discord"]);
+        let pins: Vec<_> = fake.apps().unwrap().into_iter().map(|a| a.device).collect();
+        assert_eq!(pins, [None, None, None, Some("speakers".to_string())], "the user's own pin to a real device is none of our business");
+    }
+
     /// The app asks for every icon at once, from worker threads.
     #[test]
     fn apps_go_by_the_name_they_give_themselves() {

@@ -950,6 +950,8 @@ export function Mixer(p: {
   onChannel(key: string, next: SavedChannel): void;
   /** Open that channel's sound in the Equalizer. */
   onEdit(key: string): void;
+  /** The user moved an app: remembered, so it can be put back after FreeSeries was closed. */
+  onAssign(app: string, key: string): void;
   onRefresh(): void;
 }) {
   const [apps, setApps] = useState<AudioApp[]>([]);
@@ -1030,6 +1032,7 @@ export function Mixer(p: {
   };
   const move = (name: string, to: Strip) => {
     setError(undefined);
+    p.onAssign(name, to.key);
     // The main channel is the Windows default device: moving an app there means un-pinning it.
     Promise.all(apps.filter((a) => a.name === name).map((a) => p.apps.assign(a.pid, to === main ? null : to.deviceId)))
       .catch((e) => setError(String(e)))

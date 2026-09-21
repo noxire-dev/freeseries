@@ -273,6 +273,19 @@ fn set_starts_with_windows(app: State<App>, enabled: bool) -> Result<(), String>
     Ok(())
 }
 
+/// Quitting takes the engine away, and with it everything that listens to the virtual devices. Apps
+/// the Mixer moved onto a channel are pinned there by Windows, so they would stay silent even after
+/// the user points Windows back at their headphones. They are handed back first; the UI remembers
+/// where they belong and puts them back when FreeSeries runs again.
+fn release_apps(app: &tauri::AppHandle) {
+    let ours: Vec<String> = Wasapi.outputs().unwrap_or_default().into_iter().filter(|d| d.name.to_lowercase().contains("fxsound")).map(|d| d.id).collect();
+    match freeseries::routing::release(app.state::<Box<dyn AppRouting>>().inner().as_ref(), &ours) {
+        Ok(released) if !released.is_empty() => log::info!("quitting: handed back to the Windows default: {}", released.join(", ")),
+        Ok(_) => {}
+        Err(e) => log::warn!("quitting: couldn't hand apps back to the Windows default: {e}"),
+    }
+}
+
 fn tray(app: &tauri::App) -> tauri::Result<()> {
     // "FreeSeries", or "FreeSeries dev" for a development build running next to the installed app.
     let name = app.config().product_name.clone().unwrap_or_else(|| "FreeSeries".into());
@@ -285,7 +298,10 @@ fn tray(app: &tauri::App) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => show_main(app),
-            "quit" => app.exit(0),
+            "quit" => {
+                release_apps(app);
+                app.exit(0);
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
