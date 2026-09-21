@@ -6,7 +6,7 @@
 //! Not included: what any output adds on its own (DAC, a wireless headset's radio link). Those are
 //! the same with or without freeseries.
 //!
-//! cargo run --release --example latency -- <virtual#> <output#>
+//! cargo run --release --example latency -- <virtual#> <output#> [settle seconds, default 0.4]
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
@@ -80,7 +80,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None,
     )?;
     noise.play()?;
-    std::thread::sleep(Duration::from_millis(400)); // let it reach both loopbacks before recording
+    // Let it reach both loopbacks before recording. A channel that was silent wakes with extra delay
+    // and eases it out over a few seconds: pass a longer settle time to measure where it ends up.
+    let settle: f32 = std::env::args().nth(3).and_then(|s| s.parse().ok()).unwrap_or(0.4);
+    std::thread::sleep(Duration::from_secs_f32(settle));
     in_stream.play()?;
     out_stream.play()?;
     std::thread::sleep(Duration::from_secs(4));
