@@ -1,4 +1,6 @@
-# Does audio glitch while the PC is busy building? The loop that found the 2026-09-21 bug (docs/roadmap.md).
+# Does audio glitch while the PC is busy building? Read docs/roadmap.md first: the "installed" line counts
+# what the installed app logs, and builds before the wake-up fix log this script's own test tone starting
+# and stopping as glitches. With the fix in, anything it still counts under load is real.
 #   pwsh tools/glitch-under-load.ps1 [-Channels 1] [-Output 2] [-Seconds 60]      (device numbers: cargo run)
 # Needs: cargo build --release; cargo build --release --example soak. Plays a quiet test tone for that long.
 # Runs a dev engine Media -> monitor with a test tone through it, a heavy parallel compile as the

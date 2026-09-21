@@ -68,6 +68,14 @@ fn join_pro_audio() {
     }
 }
 
+/// Delay that built up is eased out by playing this much faster until it is gone: half a percent
+/// is 9 cents, which nobody hears for two seconds. Only a big backlog (the streams starting, a long
+/// stall) goes faster. The alternative, cutting the excess out in one piece, is a click in the
+/// middle of whatever is playing.
+const EASE: f64 = 0.005;
+const EASE_FAST: f64 = 0.02;
+const EASE_FAST_ABOVE_MS: usize = 10;
+
 /// Sizes in samples (all channels counted), fixed for a session.
 struct Tuning {
     cushion: usize,
@@ -89,11 +97,18 @@ struct Feed {
     /// Silence we played because the channel had nothing for us although it was talking: its capture
     /// thread was held up. That audio will arrive late, and its moment has passed.
     owed: usize,
+    /// A channel waking from silence holds its first samples until the cushion is there, so the
+    /// sound doesn't start with holes in it.
+    primed: bool,
+    /// Frames of delay still to be eased out, and how far into the front frame of the queue the
+    /// reading has got (0 unless easing: then the output is interpolated between two frames).
+    ease: f64,
+    pos: f64,
 }
 
 impl Feed {
     fn new(queue: Arc<Mutex<VecDeque<f32>>>, last_packet_ms: Arc<AtomicU64>) -> Feed {
-        Feed { queue, last_packet_ms, talking_since_ms: None, least_left: usize::MAX, dry: 0, owed: 0 }
+        Feed { queue, last_packet_ms, talking_since_ms: None, least_left: usize::MAX, dry: 0, owed: 0, primed: false, ease: 0.0, pos: 0.0 }
     }
 
     /// Adds this channel's share to `data`. `second_over`: the once-a-second look at the leftovers is due.
@@ -101,7 +116,7 @@ impl Feed {
     /// Everything still in the queue after a callback has taken what it needs is pure delay. It
     /// builds up while the streams start (capture runs first) and whenever the output clock runs
     /// slow. Over each second, the smallest leftover seen is delay nobody needed: keep a cushion
-    /// against scheduling jitter and drop the rest, once.
+    /// against scheduling jitter and ease the rest out (see `EASE`).
     ///
     /// A stall is different: the capture thread is held up (a busy PC), we run dry and play
     /// silence, and then all the audio arrives at once. Played in full it would sit in the queue
@@ -114,7 +129,7 @@ impl Feed {
         let settled = self.talking_since_ms.is_some_and(|since| now_ms - since > SETTLED_AFTER_MS);
         if self.owed > 0 {
             // Never below what this callback needs plus the cushion: late audio goes, the safety margin stays.
-            let late = (self.owed.min(q.len().saturating_sub(data.len() + t.cushion))) / t.frame * t.frame;
+            let late = (self.owed.min(q.len().saturating_sub(data.len() + t.cushion + t.frame))) / t.frame * t.frame; // one frame more: the reader may sit between two
             if late > 0 {
                 q.drain(..late);
                 self.owed -= late;
@@ -129,23 +144,55 @@ impl Feed {
         }
         if second_over {
             if self.least_left != usize::MAX && self.least_left > t.cushion + t.slack {
-                let excess = ((self.least_left - t.cushion) / t.frame * t.frame).min(q.len()); // whole frames
-                q.drain(..excess);
-                log::info!("dropped {} ms of built-up delay", excess / t.per_ms);
+                // What is still left of an earlier easing is part of this measurement: replace, don't add.
+                // Less the fraction the reader already stands at, so that it ends exactly on a frame.
+                self.ease = ((self.least_left - t.cushion) / t.frame) as f64 - self.pos.fract();
+                log::info!("easing out {} ms of built-up delay", (self.least_left - t.cushion) / t.per_ms);
             }
-            if self.dry > 0 {
+            // Running out because the sound ended is not a glitch: only a channel that is still going counts.
+            if self.dry > 0 && talking {
                 log::warn!("playback ran dry {} times in the last second", self.dry);
             }
             (self.least_left, self.dry) = (usize::MAX, 0);
         }
-        let mut taken = 0;
-        for s in data.iter_mut() {
-            match q.pop_front() {
-                Some(x) => *s += x,
-                None => break,
+        if !talking {
+            self.primed = false; // whatever is left plays out below
+        } else if !self.primed {
+            // Twice the cushion: how much margin the timing jitter really needs is measured over the
+            // next second and the rest eased out. Starting at the bare cushion runs dry on the first late packet.
+            let start_with = data.len() + 2 * t.cushion;
+            if q.len() < start_with {
+                return; // nothing of the sound is lost: it begins a few milliseconds later
             }
-            taken += 1;
+            self.primed = true;
+            self.pos = 0.0;
+            self.ease = ((q.len() - start_with) / t.frame) as f64; // loopback wakes with a burst
         }
+
+        // Normally this copies frames. While easing it reads a little faster than it plays,
+        // interpolating between neighbours, and lands exactly on a frame again when it is done.
+        let frames = q.len() / t.frame;
+        let mut taken = 0;
+        for out in data.chunks_exact_mut(t.frame) {
+            let (at, between) = (self.pos as usize, self.pos.fract());
+            if at + (between > 0.0) as usize >= frames {
+                break;
+            }
+            for (c, s) in out.iter_mut().enumerate() {
+                let here = q[at * t.frame + c];
+                *s += if between > 0.0 { here + (q[(at + 1) * t.frame + c] - here) * between as f32 } else { here };
+            }
+            taken += t.frame;
+            let faster = if self.ease > (EASE_FAST_ABOVE_MS * t.per_ms / t.frame) as f64 { EASE_FAST } else { EASE }.min(self.ease);
+            self.ease -= faster;
+            self.pos += 1.0 + faster;
+            if self.ease == 0.0 && (self.pos - self.pos.round()).abs() < 1e-6 {
+                self.pos = self.pos.round(); // back on a frame: bit-exact copying from here on
+            }
+        }
+        let used = (self.pos as usize).min(frames);
+        q.drain(..used * t.frame);
+        self.pos -= used as f64;
         // A channel that stopped talking owes nothing: it ran out because it had nothing to say.
         self.owed = if settled { (self.owed + data.len() - taken).min(t.per_ms * 100) } else { 0 };
     }
@@ -202,12 +249,14 @@ fn open(mix: &Mix, dsp: Arc<Dsp>, on_lost: Arc<dyn Fn() + Send + Sync>) -> Resul
         feeds.push(Feed::new(queue.clone(), last_packet_ms.clone()));
 
         // Loopback delivers no packets while the endpoint is silent, and WASAPI flags the first
-        // packet after a gap as a discontinuity, which cpal reports as an xrun. Only an xrun that
-        // lands mid-audio (previous packet was recent) is a real glitch worth reporting.
-        let (seen, report) = (last_packet_ms.clone(), on_error(format!("{} capture", source.channel)));
+        // packets after a gap as discontinuities, which cpal reports as xruns. A sound starting is
+        // not a glitch: only an xrun in a channel that has been going for a while is worth reporting.
+        let woke_ms = Arc::new(AtomicU64::new(0));
+        let (seen, woke, report) = (last_packet_ms.clone(), woke_ms.clone(), on_error(format!("{} capture", source.channel)));
         let on_capture_error = move |e: cpal::Error| {
-            let gap = started.elapsed().as_millis() as u64 - seen.load(Relaxed);
-            if e.kind() != cpal::ErrorKind::Xrun || gap < 30 {
+            let now = started.elapsed().as_millis() as u64;
+            let waking = now - seen.load(Relaxed) >= SILENT_AFTER_MS || now - woke.load(Relaxed) < SETTLED_AFTER_MS;
+            if e.kind() != cpal::ErrorKind::Xrun || !waking {
                 report(e);
             }
         };
@@ -220,7 +269,11 @@ fn open(mix: &Mix, dsp: Arc<Dsp>, on_lost: Arc<dyn Fn() + Send + Sync>) -> Resul
             in_cfg.config(),
             move |data: &[f32], _: &_| {
                 join_pro_audio();
-                last_packet_ms.store(started.elapsed().as_millis() as u64, Relaxed);
+                let now = started.elapsed().as_millis() as u64;
+                if now - last_packet_ms.load(Relaxed) >= SILENT_AFTER_MS {
+                    woke_ms.store(now, Relaxed);
+                }
+                last_packet_ms.store(now, Relaxed);
                 if let Some(preset) = channel.eq.take_changed() {
                     eq.retune(&preset);
                 }
@@ -336,15 +389,36 @@ mod tests {
     }
 
     #[test]
-    fn a_capture_stall_costs_one_gap_and_no_delay() {
+    fn a_sound_that_starts_from_silence_is_never_cut() {
         let mut rig = Rig::new();
-        rig.capture(3); // capture runs first: start-up backlog
+        for _ in 0..50 {
+            rig.play(); // the channel has nothing to say
+        }
+        // Loopback wakes up with a burst: the first packets arrive together.
+        rig.capture(2);
         for _ in 0..300 {
             rig.capture(1);
             rig.play();
         }
+        let heard: Vec<f32> = rig.played.iter().copied().filter(|&s| s != 0.0).collect();
+        assert_eq!(heard.first(), Some(&1.0), "the sound starts with its first sample");
+        assert!(heard.windows(2).all(|w| w[1] > w[0] && w[1] - w[0] < 1.03), "nothing may be cut out of it: delay is eased out, a fraction of a sample at a time");
+        assert_eq!(rig.feed.ease, 0.0, "three seconds in, the easing is over");
+        let tail = &heard[heard.len() - 480..];
+        assert!(tail.windows(2).all(|w| w[1] == w[0] + 1.0) && tail[0].fract() == 0.0, "and the samples are copied untouched again");
+        assert!(rig.delay_ms() <= CUSHION_MS + 2, "and it runs at the cushion, not at whatever the burst left: {} ms", rig.delay_ms());
+    }
+
+    #[test]
+    fn a_capture_stall_costs_one_gap_and_no_delay() {
+        let mut rig = Rig::new();
+        rig.capture(3); // capture runs first: start-up backlog
+        for _ in 0..400 {
+            rig.capture(1);
+            rig.play();
+        }
         let settled = rig.delay_ms();
-        assert!(settled <= CUSHION_MS + 2, "the start-up backlog is trimmed to the cushion, got {settled} ms");
+        assert!(settled <= CUSHION_MS + 2 && rig.feed.ease == 0.0, "the start-up backlog is eased down to the cushion, got {settled} ms");
 
         // The capture thread doesn't get to run for 30 ms (a busy PC), then hands over everything at once.
         // (From SILENT_AFTER_MS on, a stall can't be told from the channel going quiet.)

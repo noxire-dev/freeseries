@@ -1,12 +1,17 @@
-//! Glitch test for a running engine: plays a continuous quiet 1 kHz tone into one endpoint and
+//! Glitch test for a running engine: plays a continuous quiet 1130 Hz tone into one endpoint and
 //! watches the loopback of another in 10 ms blocks. A block whose level sags is an underrun (the
 //! engine ran dry and played silence); a step in the tone's phase between blocks means samples were
-//! dropped or inserted. Clock drift between two devices only slides the phase slowly, so it passes.
+//! dropped or inserted. A steady slide passes: that is clock drift, or the engine easing delay out by
+//! playing a fraction of a percent fast; only a sudden change in how fast the phase moves counts.
+//! 1130 Hz and not 1 kHz: a cut of whole milliseconds (the engine used to trim 4 ms at a time) is
+//! whole cycles of a 1 kHz tone, which this tool could never have seen.
 //!
 //! cargo run --release --example soak -- <play#> <measure#> [seconds]
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
+
+const TONE_HZ: f64 = 1130.0;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arg = |n: usize| std::env::args().nth(n);
@@ -18,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let heard = listen.default_output_config()?;
     let (in_ch, block) = (heard.channels() as usize, heard.sample_rate() as usize / 100);
-    let tone = std::f64::consts::TAU * 1000.0 / heard.sample_rate() as f64;
+    let tone = std::f64::consts::TAU * TONE_HZ / heard.sample_rate() as f64;
     let levels = Arc::new(Mutex::new(Vec::<(f32, f64)>::new())); // (RMS, tone phase) of L per 10 ms block
     let sink = levels.clone();
     let (mut sum, mut count, mut re, mut im, mut t) = (0f32, 0usize, 0f64, 0f64, 0u64);
@@ -42,7 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     let cfg = play.default_output_config()?;
-    let (out_ch, w) = (cfg.channels() as usize, std::f64::consts::TAU * 1000.0 / cfg.sample_rate() as f64);
+    let (out_ch, w) = (cfg.channels() as usize, std::f64::consts::TAU * TONE_HZ / cfg.sample_rate() as f64);
     let mut n = 0u64;
     let playback = play.build_output_stream(
         cfg.config(),
@@ -67,14 +72,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     sorted.sort_by(f32::total_cmp);
     let nominal = sorted.get(sorted.len() / 2).copied().unwrap_or(0.0);
     let dropouts: Vec<usize> = steady.iter().enumerate().filter(|(_, b)| b.0 < nominal * 0.8).map(|(i, _)| i).collect();
+    // How far the phase moves per block is constant for a steady tone, whatever its exact pitch. A
+    // block where that changes by more than 0.5 rad (about 3 samples) had samples cut or inserted.
+    let wrap = |a: f64| (a + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
     let jumps: Vec<usize> = steady
-        .windows(2)
+        .windows(3)
         .enumerate()
-        .filter(|(_, w)| {
-            let step = (w[1].1 - w[0].1).rem_euclid(std::f64::consts::TAU);
-            step.min(std::f64::consts::TAU - step) > 0.3 // 0.3 rad at 1 kHz = ~2 samples
-        })
-        .map(|(i, _)| i + 1)
+        .filter(|(_, w)| wrap((w[2].1 - w[1].1) - (w[1].1 - w[0].1)).abs() > 0.5)
+        .map(|(i, _)| i + 2)
         .collect();
     println!("{} blocks of 10 ms, nominal level {:.1} dBFS", steady.len(), 20.0 * nominal.max(1e-9).log10());
     for (label, hits) in [("level dropouts", &dropouts), ("phase jumps", &jumps)] {
