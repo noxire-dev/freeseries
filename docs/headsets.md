@@ -1,7 +1,7 @@
-# Headset hardware: research notes (2026-09-21)
+# Headset hardware
 
-Read out of other projects' source, nothing here has been run against hardware by FreeSeries yet
-except the online/offline byte (`src/arctis.rs`). Sources: Arctis Sound Manager
+The protocol below was read out of other projects' source; what FreeSeries has checked on real
+hardware itself is listed under "What is built". Sources: Arctis Sound Manager
 (loteran/Arctis-Sound-Manager, GPL-3.0-or-later, itself built on elegos/Linux-Arctis-Manager,
 GPL-3.0), HeadsetControl (Sapd/HeadsetControl, GPL-3.0), ggoled (GPL-3.0, Rust, the OLED).
 There is no permissively licensed upstream.
