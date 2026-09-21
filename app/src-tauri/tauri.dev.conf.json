@@ -1,10 +1,10 @@
 {
   "identifier": "dev.freeseries.app.dev",
-  "productName": "freeseries dev",
+  "productName": "FreeSeries dev",
   "app": {
     "windows": [
       {
-        "title": "freeseries (dev)",
+        "title": "FreeSeries (dev)",
         "width": 1040,
         "height": 700,
         "minWidth": 860,

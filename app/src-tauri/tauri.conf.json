@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "freeseries",
+  "productName": "FreeSeries",
   "version": "0.2.0",
   "identifier": "dev.freeseries.app",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "freeseries",
+        "title": "FreeSeries",
         "width": 1040,
         "height": 700,
         "minWidth": 860,

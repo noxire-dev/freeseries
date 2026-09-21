@@ -308,7 +308,7 @@ export function Presets(p: {
   if (!p.target) {
     return (
       <div className="page">
-        <p className="hint">Presets show up once the freeseries audio device is installed.</p>
+        <p className="hint">Presets show up once the FreeSeries audio device is installed.</p>
       </div>
     );
   }
@@ -434,8 +434,18 @@ export function Devices(p: {
   onRunning(running: boolean): void;
   onRefresh(): void;
   onSetup(): void;
+  setup: SetupApi;
 }) {
   const virtual = p.detected?.id ?? p.source;
+  // Which device Windows plays to can change behind our back, so it is asked again every few seconds.
+  const [defaultId, setDefaultId] = useState<string | null>();
+  useEffect(() => {
+    const check = () => p.setup.defaultOutput().then(setDefaultId, () => {});
+    check();
+    const poll = setInterval(check, 3000);
+    return () => clearInterval(poll);
+  }, [p.setup]);
+  const extras = p.devices.filter((d) => isVirtualDevice(d) && d.id !== virtual && /^freeseries /i.test(d.name)).map((d) => d.name.replace(/ \(.*\)$/, ""));
   const chosen = new Set(p.outputs.map((o) => o.id));
   const available = p.devices.filter((d) => d.id !== virtual && !chosen.has(d.id) && !isVirtualDevice(d));
   // Reordering: drag a row, or use its arrow buttons (keyboard and screen readers).
@@ -449,21 +459,35 @@ export function Devices(p: {
 
   return (
     <div className="page">
-      <h2>Apps play into</h2>
+      <h2>Your Windows output</h2>
       {p.detected ? (
         <>
           <ul className="group">
             <li className="row">
-              <span className="row-title">{p.detected.name}</span>
-              <span className="row-detail">Found</span>
+              <span className="row-title">{p.detected.name.replace(/ \(.*\)$/, "")}</span>
+              {defaultId === undefined ? null : defaultId === p.detected.id ? (
+                <span className="badge">Default</span>
+              ) : (
+                <>
+                  <span className="row-detail">Not your default yet</span>
+                  <button className="link" onClick={p.setup.openSoundSettings}>
+                    Open Sound settings
+                  </button>
+                </>
+              )}
             </li>
           </ul>
-          <p className="hint hint-below">Make this your default output in Windows, and turn spatial sound on for it if you use Atmos or DTS.</p>
+          <p className="hint hint-below">
+            Everything on your PC plays into this device, and FreeSeries passes it on to what you listen on, with your EQ. Keep it as the default
+            output in Windows, and turn spatial sound on for it if you use Atmos or DTS.
+            {extras.length > 0 &&
+              ` Windows also lists ${extras.join(" and ")}: ${extras.length === 1 ? "that is a channel" : "those are channels"}, not something to pick as your default. Apps get onto a channel in the Mixer.`}
+          </p>
         </>
       ) : (
         <>
           <p className="notice">
-            The freeseries audio device isn't installed, so there's nothing for your apps to play into yet.
+            The FreeSeries audio device isn't installed, so there's nothing for your apps to play into yet.
             <button className="link" onClick={p.onSetup}>
               Set it up
             </button>
@@ -485,8 +509,8 @@ export function Devices(p: {
       <h2>You listen on</h2>
       <p className="hint">
         {p.autoSwitch
-          ? "Drag them into the order you prefer. freeseries plays on the highest one that's switched on: when it goes off, audio moves down the list, and when it comes back, audio moves back up."
-          : "freeseries only plays on the first one. Drag another to the top to use that instead."}{" "}
+          ? "Drag them into the order you prefer. FreeSeries plays on the highest one that's switched on: when it goes off, audio moves down the list, and when it comes back, audio moves back up."
+          : "FreeSeries only plays on the first one. Drag another to the top to use that instead."}{" "}
         Each keeps its own EQ. Leave spatial sound off on these so it isn't applied twice.
       </p>
       {p.outputs.length > 0 && (
@@ -715,7 +739,7 @@ export function Settings(p: {
       <h2>Audio device</h2>
       <ul className="group">
         <li className="row">
-          <span className="row-title">Install or repair the freeseries audio device</span>
+          <span className="row-title">Install or repair the FreeSeries audio device</span>
           <button className="button" onClick={p.onSetup}>
             Open setup
           </button>
@@ -724,7 +748,7 @@ export function Settings(p: {
 
       <h2>Closing the window</h2>
       <p className="hint">
-        Closing freeseries hides it in the tray next to the clock and your audio keeps running. To stop it completely, right-click the tray icon
+        Closing FreeSeries hides it in the tray next to the clock and your audio keeps running. To stop it completely, right-click the tray icon
         and choose Quit.
       </p>
 
@@ -755,7 +779,7 @@ export function Settings(p: {
         </li>
       </ul>
       <p className="hint hint-below">
-        No account and no telemetry. freeseries only goes online to fetch a headphone preset when you search for one.
+        No account and no telemetry. FreeSeries only goes online to fetch a headphone preset when you search for one.
       </p>
     </div>
   );
@@ -803,16 +827,16 @@ export function Setup(p: { setup: SetupApi; detected: Device | undefined; hasOut
   return (
     <div className="page">
       <p className="hint">
-        freeseries sits between your apps and your headphones. Three steps get it there; the first one is the only one that needs your
+        FreeSeries sits between your apps and your headphones. Three steps get it there; the first one is the only one that needs your
         permission.
       </p>
       <ol className="steps">
         {step(
           installed,
-          "Install the freeseries audio device",
+          "Install the FreeSeries audio device",
           <>
             <p className="hint">
-              Your apps play into this device, and freeseries passes the sound on to your headphones with your EQ applied. It's a driver signed
+              Your apps play into this device, and FreeSeries passes the sound on to your headphones with your EQ applied. It's a driver signed
               by Microsoft, so Windows will ask for permission once.
             </p>
             {installed ? (
@@ -829,9 +853,9 @@ export function Setup(p: { setup: SetupApi; detected: Device | undefined; hasOut
           isDefault,
           "Make it your default output",
           <>
-            <p className="hint">In Sound settings, under Output, choose the freeseries device. This page notices when you've done it.</p>
+            <p className="hint">In Sound settings, under Output, choose the FreeSeries device. This page notices when you've done it.</p>
             {isDefault ? (
-              <p className="step-state">Windows is playing into freeseries</p>
+              <p className="step-state">Windows is playing into FreeSeries</p>
             ) : (
               <button className="button" onClick={() => p.setup.openSoundSettings()} disabled={!installed}>
                 Open Sound settings
@@ -844,7 +868,7 @@ export function Setup(p: { setup: SetupApi; detected: Device | undefined; hasOut
           "Choose what you listen on",
           <>
             <p className="hint">
-              Pick your headphones and anything else you listen on. For surround in games, turn spatial sound on for the freeseries device
+              Pick your headphones and anything else you listen on. For surround in games, turn spatial sound on for the FreeSeries device
               and off for your headphones, so it's only applied once. Dolby Atmos and DTS Headphone:X work if you own them; Windows Sonic
               for Headphones is built in and free.
             </p>
@@ -992,7 +1016,7 @@ export function Mixer(p: {
   if (p.channels.length === 0) {
     return (
       <div className="page">
-        <p className="hint">The mixer shows up once the freeseries audio device is installed.</p>
+        <p className="hint">The mixer shows up once the FreeSeries audio device is installed.</p>
       </div>
     );
   }

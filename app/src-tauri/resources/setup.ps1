@@ -10,7 +10,7 @@ param(
     [Parameter(Mandatory = $true)][string]$Pkg,
     [Parameter(Mandatory = $true)][string]$Result,
     # One name per driver instance, handed out in this order to endpoints that don't have one yet.
-    [string[]]$Names = @("freeseries", "freeseries Media", "freeseries Chat"),
+    [string[]]$Names = @("FreeSeries", "FreeSeries Media", "FreeSeries Chat"),
     [switch]$DryRun,
     [switch]$RenameOnly,
     [switch]$AddInstance
@@ -99,7 +99,8 @@ public static class Endpoint {
   }
 
   /// Gives every active render endpoint of `driver` one of `names`: endpoints that already carry
-  /// one keep it, the others get the first name still free. With `apply` off it only reports.
+  /// one keep it, one that carries it in an older spelling ("freeseries Media") gets today's, and
+  /// the others get the first name still free. With `apply` off it only reports.
   /// (A bool rather than null names: PowerShell hands C# an empty string for $null, and an empty
   /// name is a valid rename.)
   public static string[] Rename(string driver, string[] names, bool apply) {
@@ -116,12 +117,15 @@ public static class Endpoint {
       ours.Add(device); current.Add(Read(read, DeviceDesc));
     }
     var free = new List<string>(names);
-    foreach (var name in current) free.Remove(name);
+    foreach (var name in current) free.RemoveAll(n => String.Equals(n, name, StringComparison.OrdinalIgnoreCase));
     for (int i = 0; i < ours.Count; i++) {
       string old = current[i];
-      if (Array.IndexOf(names, old) >= 0) { done.Add("'" + old + "' (already named)"); continue; }
-      if (free.Count == 0) { done.Add("'" + old + "' (no name left for it)"); continue; }
-      string newName = free[0]; free.RemoveAt(0);
+      string newName = Array.Find(names, n => String.Equals(n, old, StringComparison.OrdinalIgnoreCase));
+      if (newName == old) { done.Add("'" + old + "' (already named)"); continue; }
+      if (newName == null) {
+        if (free.Count == 0) { done.Add("'" + old + "' (no name left for it)"); continue; }
+        newName = free[0]; free.RemoveAt(0);
+      }
       if (!apply) { done.Add("'" + old + "' would become '" + newName + "'"); continue; }
       IPropertyStore write; Marshal.ThrowExceptionForHR(ours[i].OpenPropertyStore(2, out write)); // STGM_READWRITE
       var value = new PropVariant { vt = 31, p = Marshal.StringToCoTaskMemUni(newName) };

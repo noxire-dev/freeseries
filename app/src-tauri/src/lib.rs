@@ -153,7 +153,7 @@ fn install_device(setup: State<Box<dyn Setup>>) -> Result<Vec<String>, String> {
     setup.install_device()
 }
 
-/// Names the virtual device's endpoint "freeseries". No prompt.
+/// Names the virtual device's endpoint "FreeSeries". No prompt.
 #[tauri::command(async)]
 fn name_device(setup: State<Box<dyn Setup>>) -> Result<Vec<String>, String> {
     setup.name_device()
@@ -274,8 +274,8 @@ fn set_starts_with_windows(app: State<App>, enabled: bool) -> Result<(), String>
 }
 
 fn tray(app: &tauri::App) -> tauri::Result<()> {
-    // "freeseries", or "freeseries dev" for a development build running next to the installed app.
-    let name = app.config().product_name.clone().unwrap_or_else(|| "freeseries".into());
+    // "FreeSeries", or "FreeSeries dev" for a development build running next to the installed app.
+    let name = app.config().product_name.clone().unwrap_or_else(|| "FreeSeries".into());
     let open = MenuItem::with_id(app, "open", format!("Open {name}"), true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit (stops audio processing)", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &PredefinedMenuItem::separator(app)?, &quit])?;

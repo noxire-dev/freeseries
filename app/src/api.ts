@@ -40,7 +40,7 @@ export interface WindowApi {
 export interface SetupApi {
   /** Installs the virtual audio device. Windows asks for permission first; rejects with a readable reason. */
   installDevice(): Promise<string[]>;
-  /** Names the device's endpoint "freeseries". No prompt. */
+  /** Names the device's endpoint "FreeSeries". No prompt. */
   nameDevice(): Promise<string[]>;
   /** Installs the virtual device for one more channel (Media, then Chat). Windows asks for permission. */
   addChannelDevice(): Promise<string[]>;
@@ -235,13 +235,13 @@ export const mockSetup = (): SetupApi => ({
   installDevice: async () => {
     await wait(1400);
     preview.installed = true;
-    return ["driver installed", "endpoint: 'Speakers' -> 'freeseries'"];
+    return ["driver installed", "endpoint: 'Speakers' -> 'FreeSeries'"];
   },
-  nameDevice: async () => ["endpoint: 'Speakers' -> 'freeseries'"],
+  nameDevice: async () => ["endpoint: 'Speakers' -> 'FreeSeries'"],
   addChannelDevice: async () => {
     await wait(1400);
     preview.media = true;
-    return ["driver installed", "endpoint: 'Speakers' -> 'freeseries Media'"];
+    return ["driver installed", "endpoint: 'Speakers' -> 'FreeSeries Media'"];
   },
   openSoundSettings: async () => void wait(2500).then(() => (preview.isDefault = true)), // "the user" picks it
   defaultOutput: async () => (preview.installed && preview.isDefault ? "wasapi:fx" : "wasapi:rtk"),
@@ -253,8 +253,8 @@ export function mockEngine(): EngineApi {
   const kinds: Record<string, Kind> = { PK: "peak", LSC: "lowShelf", LS: "lowShelf", HSC: "highShelf", HS: "highShelf" };
   return {
     listOutputs: async () => [
-      ...(preview.installed ? [{ id: "wasapi:fx", name: "freeseries (FxSound Audio Enhancer)", channels: 2, sampleRate: 48000 }] : []),
-      ...(preview.installed && preview.media ? [{ id: "wasapi:fx2", name: "freeseries Media (2- FxSound Audio Enhancer)", channels: 2, sampleRate: 48000 }] : []),
+      ...(preview.installed ? [{ id: "wasapi:fx", name: "FreeSeries (FxSound Audio Enhancer)", channels: 2, sampleRate: 48000 }] : []),
+      ...(preview.installed && preview.media ? [{ id: "wasapi:fx2", name: "FreeSeries Media (2- FxSound Audio Enhancer)", channels: 2, sampleRate: 48000 }] : []),
       { id: "wasapi:hdmi", name: "Odyssey G65B (NVIDIA High Definition Audio)", channels: 2, sampleRate: 48000 },
       { id: "wasapi:rtk", name: "Speakers (Realtek(R) Audio)", channels: 2, sampleRate: 48000 },
       { id: "wasapi:arctis", name: "Headphones (Arctis Nova Pro Wireless)", channels: 2, sampleRate: 48000 },

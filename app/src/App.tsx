@@ -21,7 +21,7 @@ const NAV: { view: View; label: string; icon: string }[] = [
 const SECONDARY = new Set<View>(["settings"]);
 /** Pages reached from Settings keep it lit in the sidebar. */
 const UNDER_SETTINGS = new Set<View>(["log", "setup"]);
-const TITLES: Partial<Record<View, string>> = { log: "Log", setup: "Set up freeseries" };
+const TITLES: Partial<Record<View, string>> = { log: "Log", setup: "Set up FreeSeries" };
 
 const STATUS_TEXT: Record<Status["state"], string> = { stopped: "Stopped", running: "Running", reconnecting: "Reconnecting…" };
 
@@ -242,7 +242,7 @@ export default function App(p: {
             <path d="M4 18h3c3.9 0 4-9 7-9s3.1 9 7 9h3" />
             <circle cx="14" cy="9" r="3" />
           </svg>
-          freeseries
+          FreeSeries
           {import.meta.env.DEV && <small>dev</small>}
         </h1>
         {/* What you use every day on top; the rest sits out of the way above the status. */}
@@ -429,6 +429,7 @@ export default function App(p: {
             }}
             onRefresh={() => engine.listOutputs().then(setDevices)}
             onSetup={() => setView("setup")}
+            setup={p.setup}
           />
         )}
       </main>

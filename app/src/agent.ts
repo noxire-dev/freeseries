@@ -36,7 +36,7 @@ const LISTEN_BANDS = 30; // about third-octave
 
 const INSTRUCTIONS = `freeseries is a system-wide equalizer for Windows. Audio is split into channels (Game, and optionally Media and Chat); each channel has its own sound: a parametric EQ that runs after Windows spatial sound (Dolby Atmos, DTS). The output device carries a separate headphone correction (AutoEq measurements).
 You cannot hear. Ask what the person listens on and what bothers them, call get_state first, and use listen while their game or music is playing to see where the energy actually is. If they name their headphones and no correction is set, offer search_headphones and use_headphone_correction before shaping the sound: a sound curve on uncorrected headphones is guesswork.
-Tune with few, broad bands (Q 0.7 to 2) and changes of 1 to 4 dB; cut before you boost. Leave preamp_db out and freeseries keeps the loudest point at 0 dB so nothing clips. Every change is audible at once, so tell the person what you changed and ask what they hear. A curve the person tuned by hand and never saved is kept in the presets as "(before agent)" when you replace it.`;
+Tune with few, broad bands (Q 0.7 to 2) and changes of 1 to 4 dB; cut before you boost. Leave preamp_db out and FreeSeries keeps the loudest point at 0 dB so nothing clips. Every change is audible at once, so tell the person what you changed and ask what they hear. A curve the person tuned by hand and never saved is kept in the presets as "(before agent)" when you replace it.`;
 
 const channelArg = { type: "string", description: 'Channel key or label from get_state, e.g. "main" or "Game".' };
 
@@ -63,7 +63,7 @@ export const TOOLS = [
       properties: {
         channel: channelArg,
         name: { type: "string", description: 'Shown in the UI, e.g. "Footsteps for Valorant". Default "Agent".' },
-        preamp_db: { type: "number", description: "Leave out to have freeseries cancel the loudest boost, which is what you want unless you have a reason." },
+        preamp_db: { type: "number", description: "Leave out to have FreeSeries cancel the loudest boost, which is what you want unless you have a reason." },
         bands: {
           type: "array",
           items: {
@@ -228,7 +228,7 @@ export function createAgent(host: AgentHost, version: string): (message: string)
     switch (request.method) {
       case "initialize": {
         const asked = request.params?.protocolVersion;
-        return result({ protocolVersion: VERSIONS.includes(asked) ? asked : VERSIONS[0], capabilities: { tools: {} }, serverInfo: { name: "freeseries", title: "freeseries", version }, instructions: INSTRUCTIONS });
+        return result({ protocolVersion: VERSIONS.includes(asked) ? asked : VERSIONS[0], capabilities: { tools: {} }, serverInfo: { name: "freeseries", title: "FreeSeries", version }, instructions: INSTRUCTIONS });
       }
       case "ping":
         return result({});
