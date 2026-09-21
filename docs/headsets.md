@@ -77,7 +77,11 @@ Settings; the Mixer's output strip shows battery and "mic muted" while the heads
 
 Checked on a real Arctis Nova Pro Wireless: the base station is found, accepts the status request
 and the dial on/off commands, and its status reply decodes as documented (seen with the headset
-off). **Not yet seen on hardware: a dial event, mic mute, battery while the headset is on.**
+off), and so do battery (2 of 8 steps read as 25 %), mic mute and the dial: `07 45 5b 64` towards
+chat, `07 45 64 64` in the middle, `07 45 64 53` towards game. The dial's events arrive on
+`mi_04&col02` (usage page ff00), not on `mi_04&col01` (ffc0) where commands and answers go:
+Windows splits a HID interface into one collection per report id, hence `event_interfaces` in the
+table. There is a third collection, `mi_03` (consumer control), that we don't use.
 `cargo run -- headset 20` follows the headset for 20 s and prints every change;
 `cargo run --example headset_probe` prints the raw bytes.
 
@@ -85,7 +89,9 @@ off). **Not yet seen on hardware: a dial event, mic mute, battery while the head
 
 1. Copy `src/headsets/arctis_nova_pro_wireless.rs`, fill in the table: USB vendor and product ids,
    the part of the Windows device path that picks the right HID interface (list them with any HID
-   browser; composite devices show up as `mi_0X&colYY`), part of the audio output's name, the
+   browser; composite devices show up as `mi_0X&colYY`, and events may arrive on another
+   collection than answers do: `headset_probe` listens on all of them and says which), part of
+   the audio output's name, the
    report length, the status request, and for every message the device sends: how it starts and
    which byte means what (`Is`, `IsNot`, `Steps(max)`, `Percent`). Leave `dial_on` / `dial_off`
    empty if there is no dial.

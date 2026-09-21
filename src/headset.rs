@@ -44,8 +44,11 @@ pub struct Model {
     pub name: &'static str,
     pub vendor: u16,
     pub products: &'static [u16],
-    /// Part of the Windows device path that picks the right HID interface of the device.
+    /// Part of the Windows device path that picks the HID collection commands go to and answers come from.
     pub interface: &'static str,
+    /// Further collections of the same device that only talk: Windows splits a device by report id,
+    /// so events can arrive somewhere else than the answers do.
+    pub event_interfaces: &'static [&'static str],
     /// Part of the name of the audio output this headset plays on, to tie it to a `DeviceInfo`.
     pub output_name: &'static str,
     pub report_length: usize,
@@ -235,14 +238,22 @@ impl Presence for Headset {
 #[derive(Default)]
 pub struct Usb;
 
-pub struct UsbLink(hidapi::HidDevice);
+/// The command collection first, then the ones that only talk.
+pub struct UsbLink(Vec<hidapi::HidDevice>);
 
 impl HidLink for UsbLink {
     fn write(&mut self, message: &[u8]) -> Result<(), String> {
-        self.0.write(message).map(|_| ()).map_err(|e| e.to_string())
+        self.0[0].write(message).map(|_| ()).map_err(|e| e.to_string())
     }
     fn read(&mut self, into: &mut [u8], timeout: Duration) -> Result<usize, String> {
-        self.0.read_timeout(into, timeout.as_millis() as i32).map_err(|e| e.to_string())
+        let each = (timeout.as_millis() as i32 / self.0.len() as i32).max(1);
+        for device in &self.0 {
+            let n = device.read_timeout(into, each).map_err(|e| e.to_string())?;
+            if n > 0 {
+                return Ok(n);
+            }
+        }
+        Ok(0)
     }
 }
 
@@ -250,14 +261,14 @@ impl HidTransport for Usb {
     type Link = UsbLink;
     fn open(&mut self, models: &'static [&'static Model]) -> Option<(&'static Model, UsbLink)> {
         let api = hidapi::HidApi::new().ok()?;
-        for info in api.device_list() {
-            let path = info.path().to_string_lossy().to_ascii_lowercase();
-            let model = models.iter().find(|m| m.vendor == info.vendor_id() && m.products.contains(&info.product_id()) && path.contains(m.interface));
-            if let Some(model) = model {
-                if let Ok(device) = info.open_device(&api) {
-                    return Some((model, UsbLink(device)));
-                }
-            }
+        let path_of = |info: &hidapi::DeviceInfo| info.path().to_string_lossy().to_ascii_lowercase();
+        for model in models {
+            let ours = |info: &&hidapi::DeviceInfo| model.vendor == info.vendor_id() && model.products.contains(&info.product_id());
+            let Some(command) = api.device_list().filter(ours).find(|info| path_of(info).contains(model.interface)) else { continue };
+            let Ok(command) = command.open_device(&api) else { continue };
+            // A collection that won't open costs its events, not the headset.
+            let talkers = api.device_list().filter(ours).filter(|info| model.event_interfaces.iter().any(|i| path_of(info).contains(i))).filter_map(|info| info.open_device(&api).ok());
+            return Some((*model, UsbLink(std::iter::once(command).chain(talkers).collect())));
         }
         None
     }
@@ -275,6 +286,7 @@ mod tests {
         vendor: 1,
         products: &[2],
         interface: "",
+        event_interfaces: &[],
         output_name: "Toy Headset",
         report_length: 8,
         status_request: &[0x01],

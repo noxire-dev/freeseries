@@ -4,7 +4,8 @@
 //!
 //! Byte facts as documented by HeadsetControl, Linux-Arctis-Manager and Arctis Sound Manager;
 //! status reply and command acceptance checked on hardware with `examples/headset_probe.rs`.
-//! The dial events have not been seen on hardware yet.
+//! battery, mic mute and the dial confirmed on hardware too. The dial's events arrive on the
+//! second collection of interface 4, not where the answers do.
 
 use crate::headset::{Decode, Field, Model, Report};
 use std::time::Duration;
@@ -14,6 +15,7 @@ pub static MODEL: Model = Model {
     vendor: 0x1038,
     products: &[0x12E0, 0x12E5, 0x225D],
     interface: "mi_04&col01",
+    event_interfaces: &["mi_04&col02"],
     output_name: "Arctis Nova Pro",
     report_length: 64,
     status_request: &[0x06, 0xB0],
@@ -56,9 +58,14 @@ mod tests {
     #[test]
     fn reads_the_dial_and_ignores_the_rest() {
         let mut state = State::default();
-        assert!(decode(&MODEL, &[0x07, 0x45, 100, 35], &mut state));
-        assert_eq!(state.dial, Some((1.0, 0.35)));
+        // Captured while the dial was turned towards chat, back to the middle, then towards game.
+        assert!(decode(&MODEL, &[0x07, 0x45, 0x5B, 0x64, 0, 0], &mut state));
+        assert_eq!(state.dial, Some((0.91, 1.0)));
+        assert!(decode(&MODEL, &[0x07, 0x45, 0x64, 0x64, 0, 0], &mut state));
+        assert_eq!(state.dial, Some((1.0, 1.0)));
+        assert!(decode(&MODEL, &[0x07, 0x45, 0x64, 0x53, 0, 0], &mut state));
+        assert_eq!(state.dial, Some((1.0, 0.83)));
         assert!(!decode(&MODEL, &[0x07, 0x25, 30], &mut state), "the volume knob is not something we track");
-        assert_eq!(state.dial, Some((1.0, 0.35)));
+        assert_eq!(state.dial, Some((1.0, 0.83)));
     }
 }
