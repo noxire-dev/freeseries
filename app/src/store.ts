@@ -35,6 +35,8 @@ export interface Saved {
   library: NamedPreset[];
   /** Which channel an app belongs on, by app name. Apps on the main channel aren't listed: that is where everything plays anyway. */
   assignments: Record<string, string>;
+  /** The headset's ChatMix dial sets the balance between the main channel and the second one. */
+  dial: boolean;
   /** Let an AI agent in through the local MCP endpoint. The token is made the first time this is switched on. */
   agent: boolean;
   agentToken: string;
@@ -45,7 +47,7 @@ export interface SettingsStore {
   save(saved: Saved): void;
 }
 
-const EMPTY: Saved = { source: null, outputs: [], running: false, autoSwitch: true, hotkeys: true, channels: {}, balance: 0, bypass: false, library: [], assignments: {}, agent: false, agentToken: "" };
+const EMPTY: Saved = { source: null, outputs: [], running: false, autoSwitch: true, hotkeys: true, channels: {}, balance: 0, bypass: false, library: [], assignments: {}, dial: true, agent: false, agentToken: "" };
 
 /** 0.1.x stored a single route with one global preset. */
 function fromRoute(raw: Record<string, any>): Record<string, any> {

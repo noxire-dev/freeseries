@@ -4,7 +4,7 @@ mod setup;
 
 use autostart::{Autostart, TaskScheduler};
 use setup::{ScriptSetup, Setup};
-use freeseries::arctis::ArctisNovaPro;
+use freeseries::headset::{Headset, Usb};
 use freeseries::engine::{AudioBackend, DeviceInfo, Engine, Plan, Status};
 use freeseries::eq::Preset;
 use freeseries::routing::{AppRouting, AudioApp, Icon, WindowsRouting};
@@ -177,6 +177,18 @@ fn app_icon(routing: State<Box<dyn AppRouting>>, path: String) -> Option<Icon> {
     routing.icon(&path)
 }
 
+/// What the headset says about itself: switched on, battery, mic mute, dial. Changes also arrive as "headset" events.
+#[tauri::command]
+fn headset_state(headset: State<Headset>) -> freeseries::headset::State {
+    headset.state()
+}
+
+/// Have the headset's ChatMix dial report to us (it then drives the Game / Media balance).
+#[tauri::command]
+fn set_dial(headset: State<Headset>, enabled: bool) {
+    headset.set_dial(enabled);
+}
+
 /// Peak level per channel (and "out" for the mix) since the last call, linear, 1.0 = full scale.
 #[tauri::command]
 fn levels(app: State<App>) -> std::collections::HashMap<String, f32> {
@@ -300,6 +312,7 @@ fn tray(app: &tauri::App) -> tauri::Result<()> {
             "open" => show_main(app),
             "quit" => {
                 release_apps(app);
+                app.state::<Headset>().stop(); // gives the dial back to the hardware
                 app.exit(0);
             }
             _ => {}
@@ -318,6 +331,15 @@ fn tray(app: &tauri::App) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // The headset watcher starts before the app exists (the engine needs it to know which outputs
+    // are switched on), so its events wait for the handle.
+    let events: std::sync::Arc<std::sync::OnceLock<tauri::AppHandle>> = Default::default();
+    let to_ui = events.clone();
+    let headset = Headset::start(Usb, &freeseries::headsets::ALL, move |state| {
+        if let Some(app) = to_ui.get() {
+            let _ = app.emit("headset", state);
+        }
+    });
     tauri::Builder::default()
         // Must be first. A second copy would run a second engine and double the audio.
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -352,7 +374,8 @@ pub fn run() {
                 .rotation_strategy(RotationStrategy::KeepSome(3))
                 .build(),
         )
-        .manage(App { engine: Engine::start(Wasapi, ArctisNovaPro::default()), autostart: Box::new(TaskScheduler { task: "freeseries", args: MINIMIZED }), agent: Default::default() })
+        .manage(App { engine: Engine::start(Wasapi, headset.clone()), autostart: Box::new(TaskScheduler { task: "freeseries", args: MINIMIZED }), agent: Default::default() })
+        .manage(headset)
         .invoke_handler(tauri::generate_handler![
             list_outputs,
             snapshot,
@@ -377,9 +400,12 @@ pub fn run() {
             about,
             set_hotkeys,
             set_agent,
+            headset_state,
+            set_dial,
             agent_reply
         ])
-        .setup(|app| {
+        .setup(move |app| {
+            let _ = events.set(app.handle().clone());
             let resources = app.path().resource_dir()?.join("resources");
             let bridge = std::sync::Arc::new(UiBridge::default());
             let _ = bridge.app.set(app.handle().clone());

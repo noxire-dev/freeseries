@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { About, AppsApi, AudioApp, AutoEqApi, AutoEqEntry, Band, Device, InfoApi, Kind, LogEntry, Preset, SetupApi, StartupApi, Status } from "./api";
+import type { About, HeadsetState, AppsApi, AudioApp, AutoEqApi, AutoEqEntry, Band, Device, InfoApi, Kind, LogEntry, Preset, SetupApi, StartupApi, Status } from "./api";
 import EqGraph, { bandColor } from "./EqGraph";
 import { DB_RANGE, F_MAX, F_MIN, clamp, combine, formatDb, formatPreset, frequencies, totalGainDb } from "./eqmath";
 import { BUILTIN } from "./builtin";
@@ -646,6 +646,10 @@ export function Settings(p: {
   hotkeys: boolean;
   refusedHotkeys: string[];
   onHotkeys(enabled: boolean): void;
+  /** The headset FreeSeries recognised, if any. */
+  headset: string | null;
+  dial: boolean;
+  onDial(enabled: boolean): void;
   agent: { on: boolean; url: string | null; token: string; error: string | undefined };
   onAgent(enabled: boolean): void;
   onSetup(): void;
@@ -706,6 +710,23 @@ export function Settings(p: {
           </li>
         ))}
       </ul>
+
+      {p.headset && (
+        <>
+          <h2>{p.headset}</h2>
+          <ul className="group">
+            <li>
+              <label className="row">
+                <span className="row-title">The ChatMix dial sets the Game and Media balance</span>
+                <input type="checkbox" role="switch" className="switch" checked={p.dial} onChange={(e) => p.onDial(e.target.checked)} />
+              </label>
+            </li>
+          </ul>
+          <p className="hint hint-below">
+            Needs a second channel (Mixer, Add a media channel). SteelSeries GG wants the dial for itself, so close it if the dial doesn't respond.
+          </p>
+        </>
+      )}
 
       <h2>AI agents</h2>
       <ul className="group">
@@ -944,6 +965,8 @@ export function Mixer(p: {
   channels: Strip[];
   presets: NamedPreset[];
   output: { name: string; correction: string; playing: boolean } | undefined;
+  /** The headset the output belongs to, while it is switched on. */
+  headset: HeadsetState | undefined;
   balance: number;
   setup: SetupApi;
   onBalance(balance: number): void;
@@ -1175,6 +1198,13 @@ export function Mixer(p: {
               {p.output.playing ? "Output" : "Stopped"}
               <small>{p.output.name}</small>
               <small>{p.output.correction}</small>
+              {p.headset && (p.headset.battery !== null || p.headset.micMuted) && (
+                <small>
+                  {p.headset.battery !== null && `Battery ${Math.round(p.headset.battery * 100)}%`}
+                  {p.headset.battery !== null && p.headset.micMuted && ", "}
+                  {p.headset.micMuted && "mic muted"}
+                </small>
+              )}
             </h3>
           </section>
         )}

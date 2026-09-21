@@ -61,14 +61,40 @@ OLED (from ggoled): bitmap `06 93 x 0 w h` + column-major LSB data in strips up 
 HeadsetControl covers battery, online, sidetone, lights, inactive time, EQ and save for this
 model, but not ChatMix, ANC or mic mute.
 
-## Design to build
+## What is built (2026-09-21)
 
-One Rust file per headset exporting a `const` table, one registry line; no YAML (a parser
-dependency, and ASM shows where that schema ends up). The table: name, vendor, product ids,
-Windows interface match, report id and length, status request, reply maps (prefix -> field ->
-offset, with a decoder: steps, map, on/off, percent), settings (name, opcode, range), init and
-shutdown sequences with pacing, optional save command, optional OLED block. All I/O behind one
-`HidTransport` trait (write, read with timeout, feature report) so a table is tested against
-canned replies. Poll `06 b0` slowly, one reader thread for the `07` events.
+`src/headset.rs` is the generic part: the `Model` table type, `decode`, and `Headset`, a watcher
+thread that finds a known headset, asks for its status every 2 s, reads its events, and publishes a
+`State` (online, battery, mic muted, dial) whenever it changes. All USB goes through the
+`HidTransport` / `HidLink` traits (`Usb` is the hidapi one), so the watcher is tested with a toy
+headset and no hardware. `Headset` is also the engine's `Presence`: a headset that says it is
+switched off makes the engine move to the next output. On Quit the dial is handed back to the
+hardware before the app leaves.
 
-First use: the ChatMix dial drives the Mixer's Game / Media balance.
+In the app: state arrives as "headset" events; the ChatMix dial sets the balance between the main
+channel and the second one (chat side minus game side, snapping to the middle), with a switch in
+Settings; the Mixer's output strip shows battery and "mic muted" while the headset is on.
+
+Checked on a real Arctis Nova Pro Wireless: the base station is found, accepts the status request
+and the dial on/off commands, and its status reply decodes as documented (seen with the headset
+off). **Not yet seen on hardware: a dial event, mic mute, battery while the headset is on.**
+`cargo run -- headset 20` follows the headset for 20 s and prints every change;
+`cargo run --example headset_probe` prints the raw bytes.
+
+## Adding a headset
+
+1. Copy `src/headsets/arctis_nova_pro_wireless.rs`, fill in the table: USB vendor and product ids,
+   the part of the Windows device path that picks the right HID interface (list them with any HID
+   browser; composite devices show up as `mi_0X&colYY`), part of the audio output's name, the
+   report length, the status request, and for every message the device sends: how it starts and
+   which byte means what (`Is`, `IsNot`, `Steps(max)`, `Percent`). Leave `dial_on` / `dial_off`
+   empty if there is no dial.
+2. Add one line to `src/headsets/mod.rs`.
+3. Add a test with a reply captured from the real device (`headset_probe` prints them). That
+   capture is what lets someone without the hardware review and later refactor the table.
+4. Write the table from the protocol facts, in your own words; say where the facts came from. Do
+   not paste code or data files from GPL projects without keeping their notices (see above), and
+   nothing derived from a vendor's decrypted files.
+
+Writes (sidetone, ANC, hardware EQ) and the OLED are not in the table yet: add a `settings` list
+when the first one is built, not before.

@@ -40,7 +40,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     if args.first().map(String::as_str) == Some("headset") {
-        println!("Arctis Nova Pro headset online: {:?}", freeseries::arctis::ArctisNovaPro::default().headset_online());
+        // Follows the headset for a while: switch it on and off, press mute, turn the dial.
+        use freeseries::headset::{Headset, Usb};
+        let headset = Headset::start(Usb, &freeseries::headsets::ALL, |state| println!("{state:?}"));
+        headset.set_dial(true);
+        std::thread::sleep(Duration::from_secs(args.get(1).and_then(|s| s.parse().ok()).unwrap_or(20)));
+        headset.stop();
         return Ok(());
     }
     if args.first().map(String::as_str) != Some("run") || args.len() < 3 {

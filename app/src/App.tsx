@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AgentApi, AppsApi, AutoEqApi, Device, EngineApi, HotkeyApi, InfoApi, LogApi, LogEntry, Preset, SetupApi, StartupApi, Status, WindowApi } from "./api";
+import type { AgentApi, HeadsetApi, HeadsetState, AppsApi, AutoEqApi, Device, EngineApi, HotkeyApi, InfoApi, LogApi, LogEntry, Preset, SetupApi, StartupApi, Status, WindowApi } from "./api";
 import { findVirtualDevice, shortName, virtualChannels } from "./devices";
 import { BUILTIN } from "./builtin";
 import { createAgent } from "./agent";
@@ -35,6 +35,7 @@ export default function App(p: {
   hotkeys: HotkeyApi;
   apps: AppsApi;
   agent: AgentApi;
+  headset: HeadsetApi;
   autoEq: AutoEqApi;
   settings: SettingsStore;
   /** A development build sits next to the installed app, so it must not start playing by itself. */
@@ -56,6 +57,8 @@ export default function App(p: {
   const [bypass, setBypass] = useState(saved.bypass);
   const [library, setLibrary] = useState(saved.library);
   const [assignments, setAssignments] = useState(saved.assignments);
+  const [dialOn, setDialOn] = useState(saved.dial);
+  const [headset, setHeadset] = useState<HeadsetState>();
   const [agentOn, setAgentOn] = useState(saved.agent);
   const [agentToken, setAgentToken] = useState(saved.agentToken);
   const [agentUrl, setAgentUrl] = useState<string | null>(null);
@@ -83,8 +86,8 @@ export default function App(p: {
   }, [engine]);
 
   useEffect(
-    () => settings.save({ source, outputs, running, autoSwitch, hotkeys: hotkeysOn, channels: mixer, balance, bypass, library, assignments, agent: agentOn, agentToken }),
-    [source, outputs, running, autoSwitch, hotkeysOn, mixer, balance, bypass, library, assignments, agentOn, agentToken],
+    () => settings.save({ source, outputs, running, autoSwitch, hotkeys: hotkeysOn, channels: mixer, balance, bypass, library, assignments, dial: dialOn, agent: agentOn, agentToken }),
+    [source, outputs, running, autoSwitch, hotkeysOn, mixer, balance, bypass, library, assignments, dialOn, agentOn, agentToken],
   );
   useEffect(() => void p.hotkeys.setEnabled(hotkeysOn).then(setRefused, () => {}), [p.hotkeys, hotkeysOn]);
 
@@ -152,6 +155,21 @@ export default function App(p: {
     const poll = setInterval(place, 5000);
     return () => clearInterval(poll);
   }, [p.apps, audioOn]);
+
+  // The headset's own dial is the balance, for as long as there is a second channel to balance against.
+  const hasBalance = channels.length > 1;
+  useEffect(() => void p.headset.setDial(dialOn && hasBalance).catch(() => {}), [p.headset, dialOn, hasBalance]);
+  useEffect(() => {
+    p.headset.state().then(setHeadset, () => {});
+    const stop = p.headset.subscribe(setHeadset);
+    return () => void stop.then((unsubscribe) => unsubscribe());
+  }, [p.headset]);
+  const [dialGame, dialChat] = headset?.dial ?? [null, null];
+  useEffect(() => {
+    if (dialGame === null || dialChat === null || !dialOn) return;
+    const turned = dialChat - dialGame; // both sides full in the middle; turning it takes one side down
+    setBalance(Math.abs(turned) < 0.03 ? 0 : turned);
+  }, [dialGame, dialChat, dialOn]);
 
   // Stable identities: the graph restarts its analyser loop when these change.
   const spectrum = useCallback(() => engine.spectrum(96), [engine]);
@@ -380,6 +398,7 @@ export default function App(p: {
             levels={engine.levels}
             presets={sounds}
             output={editing && { name: nameOf(activeId ?? editing.id), correction: editing.correction?.name ?? "No correction", playing: activeId !== undefined }}
+            headset={headset?.online && headset.model && nameOf(activeId ?? editing?.id ?? "").includes(headset.model.replace(/ Wireless$/, "")) ? headset : undefined}
             channels={channels.map((c) => ({ key: c.key, label: c.label, deviceId: c.device.id, device: c.device.name.replace(/ \(.*\)$/, ""), ...(mixer[c.key] ?? DEFAULT_CHANNEL) }))} // the name to look for in an app's device list
             balance={balance}
             setup={p.setup}
@@ -422,6 +441,9 @@ export default function App(p: {
             hotkeys={hotkeysOn}
             refusedHotkeys={refused}
             onHotkeys={setHotkeysOn}
+            headset={headset?.model ?? null}
+            dial={dialOn}
+            onDial={setDialOn}
             agent={{ on: agentOn, url: agentUrl, token: agentToken, error: agentError }}
             onAgent={(on) => {
               if (on && !agentToken) setAgentToken(crypto.randomUUID().replace(/-/g, ""));

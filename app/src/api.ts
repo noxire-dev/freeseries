@@ -55,6 +55,24 @@ export interface InfoApi {
   about(): Promise<About>;
 }
 
+/** What a headset says about itself beyond audio. Fields it can't report stay null. */
+export interface HeadsetState {
+  model: string | null;
+  online: boolean | null;
+  /** 0 to 1. */
+  battery: number | null;
+  micMuted: boolean | null;
+  /** Game and chat side of a ChatMix dial, each 0 to 1: both full in the middle. */
+  dial: [number, number] | null;
+}
+
+export interface HeadsetApi {
+  state(): Promise<HeadsetState>;
+  /** Have the dial report its position to us instead of the hardware using it by itself. */
+  setDial(enabled: boolean): Promise<void>;
+  subscribe(onChange: (state: HeadsetState) => void): Promise<() => void>;
+}
+
 /** The way in for an AI agent: a local MCP endpoint whose messages are answered by the UI (`agent.ts`). */
 export interface AgentApi {
   /** Opens or closes the endpoint. Resolves to its URL while open. Rejects when the port is taken. */
@@ -181,6 +199,16 @@ export async function tauriHotkeys(): Promise<HotkeyApi> {
   };
 }
 
+export async function tauriHeadset(): Promise<HeadsetApi> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  const { listen } = await import("@tauri-apps/api/event");
+  return {
+    state: () => invoke("headset_state"),
+    setDial: (enabled) => invoke("set_dial", { enabled }),
+    subscribe: (onChange) => listen<HeadsetState>("headset", (e) => onChange(e.payload)),
+  };
+}
+
 export async function tauriAgent(): Promise<AgentApi> {
   const { invoke } = await import("@tauri-apps/api/core");
   const { listen } = await import("@tauri-apps/api/event");
@@ -302,6 +330,25 @@ export function mockStartup(): StartupApi {
 }
 
 export const mockInfo = (): InfoApi => ({ about: async () => ({ version: "0.0.0", commit: "preview", dev: true }) });
+
+/** A Nova Pro at 75 %. `window.dial(game, chat)` turns its dial in the preview. */
+export const mockHeadset = (): HeadsetApi => {
+  let state: HeadsetState = { model: "Arctis Nova Pro Wireless", online: true, battery: 0.75, micMuted: false, dial: null };
+  const listeners = new Set<{ onChange(state: HeadsetState): void }>(); // wrapped: React subscribes the same function twice in dev
+  (window as any).dial = (game: number, chat: number) => {
+    state = { ...state, dial: [game, chat] };
+    listeners.forEach((l) => l.onChange(state));
+  };
+  return {
+    state: async () => state,
+    setDial: async () => {},
+    subscribe: async (onChange) => {
+      const listener = { onChange };
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+  };
+};
 
 /** No endpoint in the browser preview; `window.agent(message)` talks to the same handler instead. */
 export const mockAgent = (): AgentApi => ({

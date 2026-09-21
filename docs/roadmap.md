@@ -38,6 +38,8 @@ The EQ editor needs love and the app reads as an open-source project. Do it as a
 
 - **Upgrading without uninstalling (2026-09-21).** The installer never needed the old version removed: over an existing install it shows a page whose second option is "Do not uninstall", and it has the update mode Tauri's own updater uses. `npm run upgrade` (`app/scripts/upgrade.ps1`) builds and runs it with `/P /UPDATE /NS /R`: no pages, settings and shortcuts stay, the app restarts. Flags read out of the generated `installer.nsi`; **the script has not been run**. It closes every `freeseries-app.exe`, a dev build included. Version 0.3.0 from here on, so an upgrade is an upgrade and not a same-version reinstall. An in-app updater (`tauri-plugin-updater`) is the next step and waits on two things that are the owner's: a public place for releases (there is no git remote yet) and a signing key only they hold.
 
+- **Headset modules (2026-09-21).** Per-headset hardware support is a table, one file per headset, community-maintained except the Arctis Nova Pro Wireless (the only one we own). Replaces `arctis.rs`. The ChatMix dial drives the Game / Media balance; battery and mic mute show on the output strip. Details, the protocol and how to add a headset: `docs/headsets.md`. Microphone processing research and the route to try first (VB-CABLE as the virtual mic, our own capture APO as the fallback): `docs/mic.md`. Later, on the same kind of seam: clip capture with one track per channel (the engine already has every channel separately).
+
 Still to do from the same list: switch the sound preset when a game launches (needs foreground-process watching and a rules UI), the `IAudioClient3` backend, README / updater / code signing for a public release.
 
 ## 4. Sonar preset import
