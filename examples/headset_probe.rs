@@ -2,7 +2,7 @@
 //! HID collection it exposes: the status reply, then, with software ChatMix switched on, every
 //! event for a while (turn the dial, press mute, turn the volume). This is how the byte facts in
 //! docs/headsets.md get checked on real hardware, and how to find which collection carries what.
-//! cargo run --example headset_probe -- [seconds]
+//! cargo run --example headset_probe -- [seconds] [poll]
 use std::time::{Duration, Instant};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -43,6 +43,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     };
+
+    // `poll`: the station doesn't announce everything (a click on its knob sends nothing). Ask it
+    // the questions it answers (06 b0 status, 06 20 and 06 80 "various", as listed by ggoled) four
+    // times a second and print every byte of an answer that changes: do something on the device
+    // and see whether any answer notices.
+    if std::env::args().nth(2).as_deref() == Some("poll") {
+        println!("polling 06 b0 / 06 20 / 06 80 for {seconds} s. Click the knob, walk through its menu, leave it again.");
+        let began = Instant::now();
+        let mut known: std::collections::HashMap<u8, Vec<u8>> = Default::default();
+        let mut report = [0u8; 64];
+        while began.elapsed() < Duration::from_secs(seconds) {
+            for question in [0xB0u8, 0x20, 0x80] {
+                send(&[0x06, question])?;
+                let until = Instant::now() + Duration::from_millis(30);
+                while Instant::now() < until {
+                    let n = links[command].1.read_timeout(&mut report, 10).unwrap_or(0);
+                    if n < 2 || report[0] != 0x06 || report[1] != question {
+                        continue; // someone else's answer, or an event
+                    }
+                    let now = report[..n].to_vec();
+                    match known.get(&question) {
+                        None => println!("  {:>6.2}s  06 {question:02x} first answer: {}", began.elapsed().as_secs_f32(), now.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ")),
+                        Some(before) => {
+                            let changed: Vec<String> = (0..n.min(before.len())).filter(|&i| before[i] != now[i]).map(|i| format!("[{i}] {:02x}->{:02x}", before[i], now[i])).collect();
+                            if !changed.is_empty() {
+                                println!("  {:>6.2}s  06 {question:02x} changed: {}", began.elapsed().as_secs_f32(), changed.join("  "));
+                            }
+                        }
+                    }
+                    known.insert(question, now);
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        return Ok(());
+    }
 
     println!("status (06 b0): [6] battery 0-8, [7] slot battery, [9] mic muted, [0a] ANC, [0e] pairing, [0f] power");
     send(&[0x06, 0xB0])?;
