@@ -1,5 +1,7 @@
 import type { Preset } from "./api";
 import { BUILTIN } from "./builtin.ts";
+import { DEFAULT_SCREEN } from "./screen.ts";
+import type { ScreenSettings } from "./screen.ts";
 
 export interface NamedPreset { name: string; preset: Preset }
 
@@ -39,6 +41,8 @@ export interface Saved {
   dial: boolean;
   /** Show the balance on the headset's display while the dial turns. */
   display: boolean;
+  /** What the headset's display shows the rest of the time, and how it is kept from burning in. */
+  screen: ScreenSettings;
   /** The user's choices for a headset's settings, by "model:key". Headsets don't report them, so they are sent again whenever the headset appears. */
   headsetSettings: Record<string, number>;
   /** Let an AI agent in through the local MCP endpoint. The token is made the first time this is switched on. */
@@ -51,7 +55,7 @@ export interface SettingsStore {
   save(saved: Saved): void;
 }
 
-const EMPTY: Saved = { source: null, outputs: [], running: false, autoSwitch: true, hotkeys: true, channels: {}, balance: 0, bypass: false, library: [], assignments: {}, dial: true, display: true, headsetSettings: {}, agent: false, agentToken: "" };
+const EMPTY: Saved = { source: null, outputs: [], running: false, autoSwitch: true, hotkeys: true, channels: {}, balance: 0, bypass: false, library: [], assignments: {}, dial: true, display: true, screen: DEFAULT_SCREEN, headsetSettings: {}, agent: false, agentToken: "" };
 
 /** 0.1.x stored a single route with one global preset. */
 function fromRoute(raw: Record<string, any>): Record<string, any> {

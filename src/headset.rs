@@ -101,6 +101,9 @@ pub struct State {
     pub mic_muted: Option<bool>,
     /// Game and chat side of the dial, each 0 to 1.
     pub dial: Option<(f32, f32)>,
+    /// Counts everything the device said without being asked: a knob turned, a button pressed.
+    /// Somebody is at the device, which matters to whoever is drawing on its display.
+    pub activity: u32,
 }
 
 /// What a model can do, for a UI that builds itself from it.
@@ -341,6 +344,10 @@ fn converse(model: &'static Model, link: &mut impl HidLink, shared: &Shared, pub
             }
         }
         if stopping {
+            // Whatever we drew must not stay on an OLED for good.
+            if let Some(oled) = &model.oled {
+                send(model, link, &[oled.release])?;
+            }
             return Ok(());
         }
         if asked.is_none_or(|at| at.elapsed() >= POLL) {
@@ -348,8 +355,14 @@ fn converse(model: &'static Model, link: &mut impl HidLink, shared: &Shared, pub
             asked = Some(Instant::now());
         }
         let n = link.read(&mut message, LISTEN)?;
-        if n > 0 && decode(model, &message[..n], &mut state) {
-            publish(state.clone());
+        if n > 0 {
+            let unasked = !message[..n].starts_with(model.status_request); // an answer echoes its request
+            if unasked {
+                state.activity = state.activity.wrapping_add(1);
+            }
+            if decode(model, &message[..n], &mut state) || unasked {
+                publish(state.clone());
+            }
         }
     }
 }
@@ -501,7 +514,7 @@ mod tests {
         let log = sent.into_iter();
         let commands: Vec<Vec<u8>> = log.map(|m| m[..2].to_vec()).collect();
         assert_eq!(commands.first(), Some(&vec![0x01, 0x00]), "asks for the status first");
-        assert_eq!(commands.last(), Some(&vec![0xAA, 0x00]), "the dial goes back to the hardware before we leave");
+        assert_eq!(commands[commands.len() - 2..], [vec![0xAA, 0x00], vec![0x95, 0x00]], "the dial and the display go back to the hardware before we leave");
         assert_eq!(commands.iter().filter(|c| **c == [0xAA, 0x01]).count(), 1);
     }
 }

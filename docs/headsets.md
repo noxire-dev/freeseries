@@ -121,6 +121,32 @@ it, only while the headset is plugged in. Someone without an Arctis never sees a
   back to the headset after two seconds. The Nova Pro's frame format is ggoled's description;
   `examples/oled_probe.rs` draws a test pattern and the base station accepted it.
 
+### Plugins in the app, and the display (2026-09-21)
+
+The sidebar gets a Plugins tab while a known device is plugged in; it lists the plugin with its
+status, and the plugin's page (Controls, Display, Burn-in protection) is built from the table.
+A plugin is compiled in and arrives with an app update. There is deliberately no in-app
+"search and install": a headset table is a list of raw USB commands sent to someone's hardware,
+and a pull request reviewed by a person is the safety net for that. What could be downloaded
+safely later is data that can't hurt anything: display skins.
+
+`app/src/screen.ts` decides what the display shows. Three modes: the headset's own screen (ours
+only while the dial turns), a FreeSeries screen (time, battery, the main channel's sound), or dark.
+Burn-in protection, for the modes where we are the one drawing: the screen moves along a small
+orbit, one pixel a minute; it goes dark after the user has been away from keyboard and mouse for
+a chosen time (`src/idle.rs`); and because the device draws its own menu on the same display, any
+message it sends without being asked (`State::activity`: a knob, a button) gives it the screen
+back for ten seconds. On Quit the watcher releases the display. Identical frames are not sent
+twice. Checked in the browser preview (all transitions) and the frame format on hardware;
+**not yet seen on the real display: the FreeSeries screen, dark mode, and whether a button press
+on the base station really produces a message we can see** (the dial and volume do). A crash
+leaves our last frame on the display until the base station is touched or power-cycled: the
+watchdog could release it, not built.
+
+Ideas on file: skins (a skin is a draw function on a canvas, so fonts, images and animation come
+free; level meters at 10 frames a second are two 1 KB reports each), a screensaver that draws
+something instead of nothing.
+
 Only the watcher's thread talks to the device: `set`, `draw` and `release_display` queue an order
 for it. A frame nobody has seen yet is replaced by the next one rather than queued behind it.
 

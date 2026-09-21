@@ -3,18 +3,20 @@ import type { AgentApi, HeadsetApi, HeadsetFeatures, HeadsetState, AppsApi, Auto
 import { findVirtualDevice, shortName, virtualChannels } from "./devices";
 import { BUILTIN } from "./builtin";
 import { createAgent } from "./agent";
+import { useScreen } from "./screen";
 import type { AgentHost } from "./agent";
 import { DEFAULT_CHANNEL, FLAT } from "./store";
 import type { SavedOutput, SettingsStore } from "./store";
-import { Devices, Equalizer, Log, Mixer, Presets, Settings, Setup } from "./views";
+import { Devices, Equalizer, Log, Mixer, Plugins, Presets, Settings, Setup } from "./views";
 
-type View = "equalizer" | "mixer" | "presets" | "devices" | "settings" | "log" | "setup";
+type View = "equalizer" | "mixer" | "presets" | "devices" | "plugins" | "settings" | "log" | "setup";
 
 const NAV: { view: View; label: string; icon: string }[] = [
   { view: "equalizer", label: "Equalizer", icon: "M4 7h9m4 0h3M4 17h3m4 0h9M15 4.5v5M9 14.5v5" },
   { view: "mixer", label: "Mixer", icon: "M6 4v7m0 4v5M12 4v3m0 4v9M18 4v9m0 4v3M4 11h4M10 7h4M16 13h4" },
   { view: "presets", label: "Presets", icon: "M5 6h14M5 12h14M5 18h9" },
   { view: "devices", label: "Devices", icon: "M5 18v-5a7 7 0 0 1 14 0v5M5 14.5h2.5v5H5zM16.5 14.5H19v5h-2.5z" },
+  { view: "plugins", label: "Plugins", icon: "M9 3h6v4a2 2 0 1 0 4 0h2v6h-2a2 2 0 1 0 0 4h2v4H3v-6h2a2 2 0 1 0 0-4H3V7h6z" },
   { view: "settings", label: "Settings", icon: "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z" },
 ];
 
@@ -22,29 +24,6 @@ const SECONDARY = new Set<View>(["settings"]);
 /** Pages reached from Settings keep it lit in the sidebar. */
 const UNDER_SETTINGS = new Set<View>(["log", "setup"]);
 const TITLES: Partial<Record<View, string>> = { log: "Log", setup: "Set up FreeSeries" };
-
-/** The balance as a picture for a 1-bit display: the two names, a track, and a knob where the dial stands. */
-function balanceFrame([width, height]: [number, number], balance: number, left: string, right: string): Uint8Array {
-  const canvas = Object.assign(document.createElement("canvas"), { width, height });
-  const g = canvas.getContext("2d", { willReadFrequently: true })!;
-  g.fillStyle = "#000";
-  g.fillRect(0, 0, width, height);
-  g.fillStyle = "#fff";
-  g.font = "bold 13px sans-serif";
-  g.textBaseline = "top";
-  g.fillText(left.toUpperCase(), 2, 6);
-  g.textAlign = "right";
-  g.fillText(right.toUpperCase(), width - 2, 6);
-  const [track, y] = [width - 16, Math.round(height * 0.62)];
-  g.fillRect(8, y, track, 2);
-  g.fillRect(8 + track / 2 - 1, y - 5, 2, 12); // the middle
-  const knob = 8 + ((balance + 1) / 2) * track;
-  g.fillRect(Math.round(knob) - 4, y - 9, 8, 20);
-  const rgba = g.getImageData(0, 0, width, height).data;
-  const bits = new Uint8Array(Math.ceil((width * height) / 8));
-  for (let i = 0; i < width * height; i++) if (rgba[i * 4] > 127) bits[i >> 3] |= 0x80 >> (i & 7);
-  return bits;
-}
 
 const STATUS_TEXT: Record<Status["state"], string> = { stopped: "Stopped", running: "Running", reconnecting: "Reconnecting…" };
 
@@ -84,6 +63,7 @@ export default function App(p: {
   const [headset, setHeadset] = useState<HeadsetState>();
   const [features, setFeatures] = useState<HeadsetFeatures | null>(null);
   const [displayOn, setDisplayOn] = useState(saved.display);
+  const [screen, setScreen] = useState(saved.screen);
   const [headsetSettings, setHeadsetSettings] = useState(saved.headsetSettings);
   const [agentOn, setAgentOn] = useState(saved.agent);
   const [agentToken, setAgentToken] = useState(saved.agentToken);
@@ -112,8 +92,8 @@ export default function App(p: {
   }, [engine]);
 
   useEffect(
-    () => settings.save({ source, outputs, running, autoSwitch, hotkeys: hotkeysOn, channels: mixer, balance, bypass, library, assignments, dial: dialOn, display: displayOn, headsetSettings, agent: agentOn, agentToken }),
-    [source, outputs, running, autoSwitch, hotkeysOn, mixer, balance, bypass, library, assignments, dialOn, displayOn, headsetSettings, agentOn, agentToken],
+    () => settings.save({ source, outputs, running, autoSwitch, hotkeys: hotkeysOn, channels: mixer, balance, bypass, library, assignments, dial: dialOn, display: displayOn, screen, headsetSettings, agent: agentOn, agentToken }),
+    [source, outputs, running, autoSwitch, hotkeysOn, mixer, balance, bypass, library, assignments, dialOn, displayOn, screen, headsetSettings, agentOn, agentToken],
   );
   useEffect(() => void p.hotkeys.setEnabled(hotkeysOn).then(setRefused, () => {}), [p.hotkeys, hotkeysOn]);
 
@@ -212,15 +192,16 @@ export default function App(p: {
     setBalance(Math.abs(turned) < 0.03 ? 0 : turned);
   }, [dialGame, dialChat, dialOn]);
 
-  // While the dial turns, the headset's own display shows where the balance stands; then it gets its screen back.
   const second = channels[1]?.label;
-  const releaseTimer = useRef(0);
-  useEffect(() => {
-    if (dialGame === null || dialChat === null || !dialOn || !displayOn || !features?.display || !second) return;
-    p.headset.draw(balanceFrame(features.display, dialChat - dialGame, "Game", second)).catch(() => {});
-    clearTimeout(releaseTimer.current);
-    releaseTimer.current = window.setTimeout(() => p.headset.releaseDisplay().catch(() => {}), 2000);
-  }, [dialGame, dialChat, dialOn, displayOn, features, second, p.headset]);
+  useScreen({
+    headset: p.headset,
+    idle: p.info.idleSeconds,
+    features,
+    state: headset,
+    settings: screen,
+    balance: dialOn && displayOn && second ? { value: balance, left: "Game", right: second } : null,
+    sound: (mixer.main ?? DEFAULT_CHANNEL).presetName,
+  });
 
   // Stable identities: the graph restarts its analyser loop when these change.
   const spectrum = useCallback(() => engine.spectrum(96), [engine]);
@@ -346,7 +327,7 @@ export default function App(p: {
           {import.meta.env.DEV && <small>dev</small>}
         </h1>
         {/* What you use every day on top; the rest sits out of the way above the status. */}
-        {[NAV.filter((n) => !SECONDARY.has(n.view)), NAV.filter((n) => SECONDARY.has(n.view))].map((items, group) => (
+        {[NAV.filter((n) => !SECONDARY.has(n.view) && (n.view !== "plugins" || features)), NAV.filter((n) => SECONDARY.has(n.view))].map((items, group) => (
           <nav key={group} className={group === 0 ? "nav-primary" : undefined} aria-label={group === 0 ? "Main" : "More"}>
             {items.map((n) => (
               <button
@@ -484,6 +465,25 @@ export default function App(p: {
             onDelete={(name) => setLibrary(library.filter((n) => n.name !== name))}
           />
         )}
+        {view === "plugins" && (
+          <Plugins
+            headset={features}
+            state={headset}
+            hasBalance={hasBalance}
+            dial={dialOn}
+            onDial={setDialOn}
+            display={displayOn}
+            onDisplay={setDisplayOn}
+            screen={screen}
+            onScreen={setScreen}
+            headsetSettings={headsetSettings}
+            onHeadsetSetting={(key, value) => {
+              if (!features) return;
+              setHeadsetSettings({ ...headsetSettings, [`${features.model}:${key}`]: value });
+              p.headset.set(key, value).catch(() => {});
+            }}
+          />
+        )}
         {view === "settings" && (
           <Settings
             startup={p.startup}
@@ -492,17 +492,6 @@ export default function App(p: {
             hotkeys={hotkeysOn}
             refusedHotkeys={refused}
             onHotkeys={setHotkeysOn}
-            headset={features}
-            dial={dialOn}
-            onDial={setDialOn}
-            display={displayOn}
-            onDisplay={setDisplayOn}
-            headsetSettings={headsetSettings}
-            onHeadsetSetting={(key, value) => {
-              if (!features) return;
-              setHeadsetSettings({ ...headsetSettings, [`${features.model}:${key}`]: value });
-              p.headset.set(key, value).catch(() => {});
-            }}
             agent={{ on: agentOn, url: agentUrl, token: agentToken, error: agentError }}
             onAgent={(on) => {
               if (on && !agentToken) setAgentToken(crypto.randomUUID().replace(/-/g, ""));

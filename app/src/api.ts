@@ -53,6 +53,8 @@ export interface About { version: string; commit: string; dev: boolean }
 
 export interface InfoApi {
   about(): Promise<About>;
+  /** Seconds since the keyboard or mouse was last touched. */
+  idleSeconds(): Promise<number>;
 }
 
 /** What a headset says about itself beyond audio. Fields it can't report stay null. */
@@ -64,6 +66,8 @@ export interface HeadsetState {
   micMuted: boolean | null;
   /** Game and chat side of a ChatMix dial, each 0 to 1: both full in the middle. */
   dial: [number, number] | null;
+  /** Counts everything the device said without being asked: someone is at its controls. */
+  activity: number;
 }
 
 /** What a headset model can do. The Settings page builds that headset's section from this. */
@@ -204,7 +208,7 @@ export async function tauriSetup(): Promise<SetupApi> {
 
 export async function tauriInfo(): Promise<InfoApi> {
   const { invoke } = await import("@tauri-apps/api/core");
-  return { about: () => invoke("about") };
+  return { about: () => invoke("about"), idleSeconds: () => invoke("idle_seconds") };
 }
 
 export async function tauriHotkeys(): Promise<HotkeyApi> {
@@ -350,14 +354,15 @@ export function mockStartup(): StartupApi {
   return { startsWithWindows: async () => on, setStartsWithWindows: async (enabled) => void (on = enabled) };
 }
 
-export const mockInfo = (): InfoApi => ({ about: async () => ({ version: "0.0.0", commit: "preview", dev: true }) });
+export const mockInfo = (): InfoApi => ({ about: async () => ({ version: "0.0.0", commit: "preview", dev: true }), idleSeconds: async () => (window as any).idleSeconds ?? 0 });
 
 /** A Nova Pro at 75 %. `window.dial(game, chat)` turns its dial in the preview. */
 export const mockHeadset = (): HeadsetApi => {
-  let state: HeadsetState = { model: "Arctis Nova Pro Wireless", online: true, battery: 0.75, micMuted: false, dial: null };
+  let state: HeadsetState = { model: "Arctis Nova Pro Wireless", online: true, battery: 0.75, micMuted: false, dial: null, activity: 0 };
   const listeners = new Set<{ onChange(state: HeadsetState): void }>(); // wrapped: React subscribes the same function twice in dev
+  (window as any).touch = () => listeners.forEach((l) => l.onChange((state = { ...state, activity: state.activity + 1 }))); // a button on the device
   (window as any).dial = (game: number, chat: number) => {
-    state = { ...state, dial: [game, chat] };
+    state = { ...state, dial: [game, chat], activity: state.activity + 1 };
     listeners.forEach((l) => l.onChange(state));
   };
   return {

@@ -6,6 +6,7 @@ import { BUILTIN } from "./builtin";
 import { isVirtualDevice } from "./devices";
 import { FLAT } from "./store";
 import type { NamedPreset, SavedChannel, SavedOutput } from "./store";
+import type { ScreenMode, ScreenSettings } from "./screen";
 
 const KINDS: { kind: Kind; label: string }[] = [
   { kind: "lowShelf", label: "Low shelf" },
@@ -650,15 +651,6 @@ export function Settings(p: {
   hotkeys: boolean;
   refusedHotkeys: string[];
   onHotkeys(enabled: boolean): void;
-  /** What the plugged-in headset can do. Null: none we know, and then it has no section here. */
-  headset: HeadsetFeatures | null;
-  dial: boolean;
-  onDial(enabled: boolean): void;
-  display: boolean;
-  onDisplay(enabled: boolean): void;
-  /** The user's choices, by "model:key". */
-  headsetSettings: Record<string, number>;
-  onHeadsetSetting(key: string, value: number): void;
   agent: { on: boolean; url: string | null; token: string; error: string | undefined };
   onAgent(enabled: boolean): void;
   onSetup(): void;
@@ -719,56 +711,6 @@ export function Settings(p: {
           </li>
         ))}
       </ul>
-
-      {/* One section per headset FreeSeries knows, built from what that headset's table says it can do. */}
-      {p.headset && (
-        <>
-          <h2>{p.headset.model}</h2>
-          <ul className="group">
-            {p.headset.dial && (
-              <li>
-                <label className="row">
-                  <span className="row-title">The ChatMix dial sets the Game and Media balance</span>
-                  <input type="checkbox" role="switch" className="switch" checked={p.dial} onChange={(e) => p.onDial(e.target.checked)} />
-                </label>
-              </li>
-            )}
-            {p.headset.dial && p.headset.display && (
-              <li>
-                <label className={`row${p.dial ? "" : " is-unused"}`}>
-                  <span className="row-title">Show the balance on its display while the dial turns</span>
-                  <input type="checkbox" role="switch" className="switch" checked={p.display} disabled={!p.dial} onChange={(e) => p.onDisplay(e.target.checked)} />
-                </label>
-              </li>
-            )}
-            {p.headset.settings.map((s) => {
-              const value = p.headsetSettings[`${p.headset!.model}:${s.key}`];
-              return (
-                <li key={s.key}>
-                  <label className="row">
-                    <span className="row-title">{s.label}</span>
-                    <select value={value ?? ""} onChange={(e) => p.onHeadsetSetting(s.key, Number(e.target.value))}>
-                      {/* The headset doesn't say what it is set to, so until the user picks, we don't pretend to know. */}
-                      {value === undefined && <option value="">As it is</option>}
-                      {Array.from({ length: s.max - s.min + 1 }, (_, i) => (
-                        <option key={i} value={s.min + i}>
-                          {s.names[i] ?? s.min + i}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </li>
-              );
-            })}
-          </ul>
-          {p.headset.dial && (
-            <p className="hint hint-below">
-              The dial needs a second channel (Mixer, Add a media channel). SteelSeries GG wants the dial for itself, so close it if the dial
-              doesn't respond.
-            </p>
-          )}
-        </>
-      )}
 
       <h2>AI agents</h2>
       <ul className="group">
@@ -1270,6 +1212,165 @@ export function Mixer(p: {
         </label>
       )}
       {error && <p className="notice">{error}</p>}
+    </div>
+  );
+}
+
+const SCREEN_MODES: { mode: ScreenMode; label: string; detail: string }[] = [
+  { mode: "stock", label: "The headset's own screen", detail: "FreeSeries only draws on it while you turn the dial." },
+  { mode: "ours", label: "FreeSeries screen", detail: "The time, the battery and the sound you have on." },
+  { mode: "off", label: "Dark", detail: "Nothing, until you touch the dial or a button." },
+];
+
+/**
+ * Plugins are what FreeSeries knows about particular hardware. One shows up here while its device
+ * is plugged in, and its page is built from what that device's table says it can do.
+ */
+export function Plugins(p: {
+  headset: HeadsetFeatures | null;
+  state: HeadsetState | undefined;
+  /** There is a second channel for the dial to balance against. */
+  hasBalance: boolean;
+  dial: boolean;
+  onDial(enabled: boolean): void;
+  display: boolean;
+  onDisplay(enabled: boolean): void;
+  screen: ScreenSettings;
+  onScreen(next: ScreenSettings): void;
+  /** The user's choices, by "model:key". */
+  headsetSettings: Record<string, number>;
+  onHeadsetSetting(key: string, value: number): void;
+}) {
+  const [open, setOpen] = useState<string | null>(null);
+  if (!p.headset) {
+    return (
+      <div className="page">
+        <p className="hint">Nothing FreeSeries has a plugin for is plugged in right now.</p>
+      </div>
+    );
+  }
+  const status = [
+    p.state?.online === false ? "Headset switched off" : p.state?.online ? "Connected" : null,
+    p.state?.online && p.state.battery !== null ? `battery ${Math.round(p.state.battery * 100)}%` : null,
+    p.state?.online && p.state.micMuted ? "mic muted" : null,
+  ].filter(Boolean).join(", ");
+
+  if (open !== p.headset.model) {
+    return (
+      <div className="page">
+        <p className="hint">Extras for the hardware you have plugged in. A plugin appears by itself when its device does.</p>
+        <ul className="group">
+          <li>
+            <button className="row row-link" onClick={() => setOpen(p.headset!.model)}>
+              <span className="row-title">{p.headset.model}</span>
+              <span className="row-detail">{status}</span>
+              <svg className="chevron" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 2.5 8 6l-3.5 3.5" /></svg>
+            </button>
+          </li>
+        </ul>
+        <p className="hint hint-below">
+          Plugins are part of FreeSeries and come with its updates. Each one is a small table describing a device, written and checked by
+          someone who owns it: a headset you would like to see here can be added on GitHub.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="page">
+      <div className="actions actions-tight">
+        <button className="link" onClick={() => setOpen(null)}>
+          All plugins
+        </button>
+        <span className="hint">{status}</span>
+      </div>
+      <h2>Controls</h2>
+          <ul className="group">
+            {p.headset.dial && (
+              <li>
+                <label className="row">
+                  <span className="row-title">The ChatMix dial sets the Game and Media balance</span>
+                  <input type="checkbox" role="switch" className="switch" checked={p.dial} onChange={(e) => p.onDial(e.target.checked)} />
+                </label>
+              </li>
+            )}
+            {p.headset.dial && p.headset.display && (
+              <li>
+                <label className={`row${p.dial ? "" : " is-unused"}`}>
+                  <span className="row-title">Show the balance on its display while the dial turns</span>
+                  <input type="checkbox" role="switch" className="switch" checked={p.display} disabled={!p.dial} onChange={(e) => p.onDisplay(e.target.checked)} />
+                </label>
+              </li>
+            )}
+            {p.headset.settings.map((s) => {
+              const value = p.headsetSettings[`${p.headset!.model}:${s.key}`];
+              return (
+                <li key={s.key}>
+                  <label className="row">
+                    <span className="row-title">{s.label}</span>
+                    <select value={value ?? ""} onChange={(e) => p.onHeadsetSetting(s.key, Number(e.target.value))}>
+                      {/* The headset doesn't say what it is set to, so until the user picks, we don't pretend to know. */}
+                      {value === undefined && <option value="">As it is</option>}
+                      {Array.from({ length: s.max - s.min + 1 }, (_, i) => (
+                        <option key={i} value={s.min + i}>
+                          {s.names[i] ?? s.min + i}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+          {p.headset.dial && (
+            <p className="hint hint-below">
+              The dial needs a second channel (Mixer, Add a media channel). SteelSeries GG wants the dial for itself, so close it if the dial
+              doesn't respond.
+            </p>
+          )}
+
+
+      {p.headset.display && (
+        <>
+          <h2>Display</h2>
+          <ul className="group" role="radiogroup" aria-label="What the display shows">
+            {SCREEN_MODES.map((m) => (
+              <li key={m.mode}>
+                <label className="row row-choice">
+                  <input type="radio" name="screen" checked={p.screen.mode === m.mode} onChange={() => p.onScreen({ ...p.screen, mode: m.mode })} />
+                  <span className="row-title">{m.label}</span>
+                  <span className="row-detail">{m.detail}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+          <h2>Burn-in protection</h2>
+          <ul className="group">
+            <li>
+              <label className={`row${p.screen.mode === "ours" ? "" : " is-unused"}`}>
+                <span className="row-title">Move the FreeSeries screen by a pixel every minute</span>
+                <input type="checkbox" role="switch" className="switch" checked={p.screen.shift} onChange={(e) => p.onScreen({ ...p.screen, shift: e.target.checked })} />
+              </label>
+            </li>
+            <li>
+              <label className={`row${p.screen.mode === "ours" ? "" : " is-unused"}`}>
+                <span className="row-title">Go dark when you are away from the PC</span>
+                <select value={p.screen.idleMinutes} onChange={(e) => p.onScreen({ ...p.screen, idleMinutes: Number(e.target.value) })}>
+                  {[1, 2, 5, 10, 30].map((m) => (
+                    <option key={m} value={m}>{`After ${m} min`}</option>
+                  ))}
+                  <option value={0}>Never</option>
+                </select>
+              </label>
+            </li>
+          </ul>
+          <p className="hint hint-below">
+            An OLED keeps a ghost of whatever sits still on it for months. FreeSeries can only protect the screen while it is the one drawing:
+            with the headset's own screen selected, that is up to the headset. Touch the dial or a button and the headset gets its screen back
+            for ten seconds, so its own menu stays usable.
+          </p>
+        </>
+      )}
     </div>
   );
 }

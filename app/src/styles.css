@@ -1543,6 +1543,28 @@ select option {
   flex: 1;
 }
 
+/* A row that opens something: the whole row is the button. */
+.row-link {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+.row-link:hover {
+  background: var(--fill-2);
+}
+
+.chevron {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: var(--label-3);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .hint-below {
   margin-top: 8px;
 }

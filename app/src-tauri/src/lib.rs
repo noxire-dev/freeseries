@@ -202,6 +202,12 @@ fn display_draw(headset: State<Headset>, bits: Vec<u8>) -> Result<(), String> {
     headset.draw(&pixels)
 }
 
+/// Seconds since the keyboard or mouse was last touched.
+#[tauri::command]
+fn idle_seconds() -> u64 {
+    freeseries::idle::idle_for().as_secs()
+}
+
 #[tauri::command]
 fn display_release(headset: State<Headset>) -> Result<(), String> {
     headset.release_display()
@@ -497,6 +503,7 @@ pub fn run() {
             headset_set,
             display_draw,
             display_release,
+            idle_seconds,
             set_dial,
             agent_reply
         ])
