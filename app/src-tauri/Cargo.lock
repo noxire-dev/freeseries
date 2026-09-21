@@ -1165,7 +1165,7 @@ dependencies = [
 
 [[package]]
 name = "freeseries"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cpal",
  "hidapi",
@@ -1176,7 +1176,7 @@ dependencies = [
 
 [[package]]
 name = "freeseries-app"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "freeseries",
  "log",
