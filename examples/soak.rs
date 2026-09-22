@@ -8,6 +8,9 @@
 //!
 //! cargo run --release --example soak -- <play#> <measure#> [seconds]
 
+//! Run it on its own: a `latency.rs` run just before it leaves the virtual device's loopback slipping
+//! for a while, and that reads as phase jumps that are nobody's fault (2026-09-22).
+
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
 

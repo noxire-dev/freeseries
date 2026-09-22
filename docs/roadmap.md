@@ -114,6 +114,14 @@ Measured on hardware (dev engine, Media -> monitor, tone started and stopped thr
 
 So the backend is worth building and is simpler than planned: own WASAPI, no IAudioClient3, one render-event-paced thread per session that drains every channel's loopback and mixes straight into the render buffer, with `Feed`'s priming and easing kept (the spike had none and got away with it only because its cap of two periods just drops the excess). Target on the evidence: ~8 ms plus the cushion, the same on every channel, since one thread reads all channels at the same moment. Both endpoints must share the mix format (the spike requires it; the engine's ponytail note about resampling stands).
 
+**Native backend, built 2026-09-22 (`src/native.rs`).** WASAPI direct, one thread per session woken by the render event: drains every channel's loopback, channel EQ and volume, mix, output EQ, limiter, render buffer. Same `Feed` (priming, easing) as the cpal backend, which stays in the tree (`FREESERIES_CPAL=1` in the CLI runs it); the app uses the native one. 19 engine tests unchanged. Measured, both channels -> monitor, settled: **main 9.4 ms** (cpal read 20-37 on this route), 25 s tone 0 dropouts 0 phase jumps, 0 dry. Wake jitter up to 3.4 ms against a 12 ms margin.
+
+Two things found on the way, both outside the backend:
+- The Media channel reads ~16-20 ms more than the main one on every backend, including the raw spike with no queue at all (device 0 -> monitor 1-11 ms, device 1 -> monitor 24 ms), while both channels hold the same 7-8 ms leftover in their queues. So it is the second fxvad instance's loopback (or its position stamps that `latency.rs` relies on), not the engine. Unverified beyond that; a microphone measurement would settle whether it is real delay or a stamp offset.
+- Running `latency.rs` right before `soak.rs` leaves the virtual device's loopback slipping for a while: the tone tool alone, with no engine in the path, then shows phase jumps (4, 6, 17 in three runs; 0 in five runs without the preamble). Two afternoons of "the engine glitches" readings had that preamble. Proven by dumping the engine's input and output: the jumps were already in the input. Noted at the top of both tools.
+
+**Not yet run on the Arctis or in the installed app.**
+
 **Next step for latency:** our own WASAPI backend on `IAudioClient3`, which lets shared-mode streams run at the driver's minimum period (often ~3 ms) instead of 10 ms. `AudioBackend` is already the seam for it. Target: ~10 ms. Whether fxvad and the user's outputs support small periods is unverified.
 
 ## Observed, not yet acted on

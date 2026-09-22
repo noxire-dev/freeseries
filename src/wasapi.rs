@@ -12,13 +12,13 @@ use std::time::Instant;
 
 /// Audio kept in hand against scheduling jitter between the capture and playback callbacks.
 /// Lower is less delay; too low and playback runs dry (a click) when the PC is busy.
-const CUSHION_MS: usize = 8;
+pub(crate) const CUSHION_MS: usize = 8;
 /// Loopback capture delivers nothing while a device is silent. A channel whose last packet is
 /// older than this isn't running dry, it just has nothing to say.
-const SILENT_AFTER_MS: u64 = 50;
+pub(crate) const SILENT_AFTER_MS: u64 = 50;
 /// A channel that just woke from silence starts with an empty queue. That isn't starvation, and
 /// its leftovers say nothing about steady-state delay, until it has been going for this long.
-const SETTLED_AFTER_MS: u64 = 150;
+pub(crate) const SETTLED_AFTER_MS: u64 = 150;
 
 pub struct Wasapi;
 
@@ -56,7 +56,7 @@ impl AudioBackend for Wasapi {
 /// holds them up for tens of milliseconds: the capture side falls behind, playback runs dry. Windows
 /// has a class for exactly this, the one every audio program's render threads are in; a thread
 /// joins it once and keeps it for life. Called at the top of every callback; only the first call does anything.
-fn join_pro_audio() {
+pub(crate) fn join_pro_audio() {
     thread_local!(static JOINED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
     if JOINED.with(|joined| joined.replace(true)) {
         return;
@@ -77,17 +77,17 @@ const EASE_FAST: f64 = 0.02;
 const EASE_FAST_ABOVE_MS: usize = 10;
 
 /// Sizes in samples (all channels counted), fixed for a session.
-struct Tuning {
-    cushion: usize,
-    slack: usize,
+pub(crate) struct Tuning {
+    pub(crate) cushion: usize,
+    pub(crate) slack: usize,
     /// Samples per frame: drops are whole frames.
-    frame: usize,
-    per_ms: usize,
+    pub(crate) frame: usize,
+    pub(crate) per_ms: usize,
 }
 
 /// One channel's audio on its way from its capture callback to the playback callback.
-struct Feed {
-    queue: Arc<Mutex<VecDeque<f32>>>,
+pub(crate) struct Feed {
+    pub(crate) queue: Arc<Mutex<VecDeque<f32>>>,
     last_packet_ms: Arc<AtomicU64>,
     /// When this channel last started talking after a silence.
     talking_since_ms: Option<u64>,
@@ -104,7 +104,7 @@ struct Feed {
 }
 
 impl Feed {
-    fn new(queue: Arc<Mutex<VecDeque<f32>>>, last_packet_ms: Arc<AtomicU64>) -> Feed {
+    pub(crate) fn new(queue: Arc<Mutex<VecDeque<f32>>>, last_packet_ms: Arc<AtomicU64>) -> Feed {
         Feed { queue, last_packet_ms, talking_since_ms: None, least_left: usize::MAX, dry: 0, primed: false, ease: 0.0, pos: 0.0 }
     }
 
@@ -115,7 +115,7 @@ impl Feed {
     /// slow. Over each second, the smallest leftover seen is delay nobody needed: keep a cushion
     /// against scheduling jitter and ease the rest out (see `EASE`).
     ///
-    fn mix_into(&mut self, data: &mut [f32], now_ms: u64, second_over: bool, t: &Tuning) {
+    pub(crate) fn mix_into(&mut self, data: &mut [f32], now_ms: u64, second_over: bool, t: &Tuning) {
         let mut q = self.queue.lock().unwrap();
         let talking = now_ms.saturating_sub(self.last_packet_ms.load(Relaxed)) < SILENT_AFTER_MS;
         self.talking_since_ms = if talking { self.talking_since_ms.or(Some(now_ms)) } else { None };
@@ -131,7 +131,6 @@ impl Feed {
                 // What is still left of an earlier easing is part of this measurement: replace, don't add.
                 // Less the fraction the reader already stands at, so that it ends exactly on a frame.
                 self.ease = ((self.least_left - t.cushion) / t.frame) as f64 - self.pos.fract();
-                log::info!("easing out {} ms of built-up delay", (self.least_left - t.cushion) / t.per_ms);
             }
             // Running out because the sound ended is not a glitch: only a channel that is still going counts.
             if self.dry > 0 && talking {

@@ -8,6 +8,9 @@
 //!
 //! cargo run --release --example latency -- <virtual#> <output#> [settle seconds, default 0.4]
 
+//! Do not run this right before `soak.rs`: for a while after this tool's noise stream closes, the
+//! virtual device's loopback delivers a few phase slips (seen 2026-09-22 with no engine in the path).
+
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

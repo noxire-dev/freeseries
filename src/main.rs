@@ -75,13 +75,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    let device = |arg: &str| Ok::<_, Box<dyn Error>>(devices.get(arg.parse::<usize>()?).ok_or("no such device")?.id.clone());
     let preset = match args.get(3) {
         Some(path) => eq::parse(&std::fs::read_to_string(path)?),
         None => eq::Preset::default(),
     };
     println!("{} EQ bands. Ctrl+C to stop.", preset.bands.len());
-    let engine = Engine::start(Wasapi, AlwaysOn);
+    // The native backend is the one shipped; FREESERIES_CPAL=1 runs the old cpal one for comparison.
+    if std::env::var("FREESERIES_CPAL").is_ok() {
+        serve(Engine::start(Wasapi, AlwaysOn), &args, &devices, preset)
+    } else {
+        serve(Engine::start(freeseries::native::Native, AlwaysOn), &args, &devices, preset)
+    }
+}
+
+fn serve(engine: Engine, args: &[String], devices: &[freeseries::engine::DeviceInfo], preset: eq::Preset) -> Result<(), Box<dyn Error>> {
+    let device = |arg: &str| Ok::<_, Box<dyn Error>>(devices.get(arg.parse::<usize>()?).ok_or("no such device")?.id.clone());
     // Several sources ("0,1") are mixed, the way the app's channels are.
     let channels = args[1]
         .split(',')

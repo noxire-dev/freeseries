@@ -6,4 +6,5 @@ pub mod idle;
 pub mod eq;
 pub mod routing;
 pub mod spectrum;
+pub mod native;
 pub mod wasapi;

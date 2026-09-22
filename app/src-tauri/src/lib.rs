@@ -9,6 +9,7 @@ use freeseries::headset::{Headset, Usb};
 use freeseries::engine::{AudioBackend, DeviceInfo, Engine, Plan, Status};
 use freeseries::eq::Preset;
 use freeseries::routing::{AppRouting, AudioApp, Icon, WindowsRouting};
+use freeseries::native::Native;
 use freeseries::wasapi::Wasapi;
 use std::os::windows::process::CommandExt;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -472,7 +473,7 @@ pub fn run() {
                 .rotation_strategy(RotationStrategy::KeepSome(3))
                 .build(),
         )
-        .manage(App { engine: Engine::start(Wasapi, headset.clone()), autostart: Box::new(TaskScheduler { task: "freeseries", args: MINIMIZED }), agent: Default::default() })
+        .manage(App { engine: Engine::start(Native, headset.clone()), autostart: Box::new(TaskScheduler { task: "freeseries", args: MINIMIZED }), agent: Default::default() })
         .manage(headset)
         .invoke_handler(tauri::generate_handler![
             list_outputs,
