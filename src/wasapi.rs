@@ -94,9 +94,6 @@ struct Feed {
     /// The least audio left over after a callback took its share, this second.
     least_left: usize,
     dry: u32,
-    /// Silence we played because the channel had nothing for us although it was talking: its capture
-    /// thread was held up. That audio will arrive late, and its moment has passed.
-    owed: usize,
     /// A channel waking from silence holds its first samples until the cushion is there, so the
     /// sound doesn't start with holes in it.
     primed: bool,
@@ -108,7 +105,7 @@ struct Feed {
 
 impl Feed {
     fn new(queue: Arc<Mutex<VecDeque<f32>>>, last_packet_ms: Arc<AtomicU64>) -> Feed {
-        Feed { queue, last_packet_ms, talking_since_ms: None, least_left: usize::MAX, dry: 0, owed: 0, primed: false, ease: 0.0, pos: 0.0 }
+        Feed { queue, last_packet_ms, talking_since_ms: None, least_left: usize::MAX, dry: 0, primed: false, ease: 0.0, pos: 0.0 }
     }
 
     /// Adds this channel's share to `data`. `second_over`: the once-a-second look at the leftovers is due.
@@ -118,24 +115,11 @@ impl Feed {
     /// slow. Over each second, the smallest leftover seen is delay nobody needed: keep a cushion
     /// against scheduling jitter and ease the rest out (see `EASE`).
     ///
-    /// A stall is different: the capture thread is held up (a busy PC), we run dry and play
-    /// silence, and then all the audio arrives at once. Played in full it would sit in the queue
-    /// as extra delay until the next trim cuts it out: a second glitch a second after the first.
-    /// So the late audio is dropped where the silence already is, and the listener gets one gap.
     fn mix_into(&mut self, data: &mut [f32], now_ms: u64, second_over: bool, t: &Tuning) {
         let mut q = self.queue.lock().unwrap();
         let talking = now_ms.saturating_sub(self.last_packet_ms.load(Relaxed)) < SILENT_AFTER_MS;
         self.talking_since_ms = if talking { self.talking_since_ms.or(Some(now_ms)) } else { None };
         let settled = self.talking_since_ms.is_some_and(|since| now_ms - since > SETTLED_AFTER_MS);
-        if self.owed > 0 {
-            // Never below what this callback needs plus the cushion: late audio goes, the safety margin stays.
-            let late = (self.owed.min(q.len().saturating_sub(data.len() + t.cushion + t.frame))) / t.frame * t.frame; // one frame more: the reader may sit between two
-            if late > 0 {
-                q.drain(..late);
-                self.owed -= late;
-                log::info!("skipped {} ms that arrived too late", late / t.per_ms);
-            }
-        }
         if settled {
             self.least_left = self.least_left.min(q.len().saturating_sub(data.len()));
             if q.len() < data.len() {
@@ -172,7 +156,6 @@ impl Feed {
         // Normally this copies frames. While easing it reads a little faster than it plays,
         // interpolating between neighbours, and lands exactly on a frame again when it is done.
         let frames = q.len() / t.frame;
-        let mut taken = 0;
         for out in data.chunks_exact_mut(t.frame) {
             let (at, between) = (self.pos as usize, self.pos.fract());
             if at + (between > 0.0) as usize >= frames {
@@ -182,7 +165,6 @@ impl Feed {
                 let here = q[at * t.frame + c];
                 *s += if between > 0.0 { here + (q[(at + 1) * t.frame + c] - here) * between as f32 } else { here };
             }
-            taken += t.frame;
             let faster = if self.ease > (EASE_FAST_ABOVE_MS * t.per_ms / t.frame) as f64 { EASE_FAST } else { EASE }.min(self.ease);
             self.ease -= faster;
             self.pos += 1.0 + faster;
@@ -193,8 +175,6 @@ impl Feed {
         let used = (self.pos as usize).min(frames);
         q.drain(..used * t.frame);
         self.pos -= used as f64;
-        // A channel that stopped talking owes nothing: it ran out because it had nothing to say.
-        self.owed = if settled { (self.owed + data.len() - taken).min(t.per_ms * 100) } else { 0 };
     }
 }
 
@@ -409,39 +389,56 @@ mod tests {
         assert!(rig.delay_ms() <= CUSHION_MS + 2, "and it runs at the cushion, not at whatever the burst left: {} ms", rig.delay_ms());
     }
 
+    /// What a game night looks like: capture packets that are late by more than the cushion, now and
+    /// then. The queue has to grow to cover that on its own, and nothing may ever be cut.
     #[test]
-    fn a_capture_stall_costs_one_gap_and_no_delay() {
+    fn jitter_is_absorbed_by_a_deeper_queue_never_by_cutting() {
         let mut rig = Rig::new();
-        rig.capture(3); // capture runs first: start-up backlog
+        rig.capture(3);
+        for i in 0..1200 {
+            // Every 7th packet arrives one callback late, so playback sees a 10 ms hole once in a while.
+            if i % 7 != 6 {
+                rig.capture(1);
+            } else {
+                rig.play();
+                rig.capture(2);
+            }
+            rig.play();
+        }
+        let heard: Vec<f32> = rig.played.iter().copied().filter(|&s| s != 0.0).collect();
+        let cuts = heard.windows(2).filter(|w| w[1] - w[0] > 1.03).count();
+        assert_eq!(cuts, 0, "audio was cut {cuts} times: the queue must deepen to cover the jitter instead");
+        let quiet_after_settling = rig.played[rig.played.len() / 2..].iter().filter(|&&s| s == 0.0).count();
+        assert_eq!(quiet_after_settling, 0, "once the queue has grown to cover the jitter, nothing runs dry");
+    }
+
+    /// A capture stall (the thread held up, a busy PC) is heard once, as silence. The audio that
+    /// then arrives late is played, not cut: cutting it would run the queue dry again on the next
+    /// late packet, and that loop was a crackle once a second on a game night (2026-09-22). The
+    /// delay it leaves behind eases out on its own once the next second shows it wasn't needed.
+    #[test]
+    fn a_capture_stall_is_one_gap_and_the_delay_eases_out() {
+        let mut rig = Rig::new();
+        rig.capture(3);
         for _ in 0..400 {
             rig.capture(1);
             rig.play();
         }
         let settled = rig.delay_ms();
-        assert!(settled <= CUSHION_MS + 2 && rig.feed.ease == 0.0, "the start-up backlog is eased down to the cushion, got {settled} ms");
-
-        // The capture thread doesn't get to run for 30 ms (a busy PC), then hands over everything at once.
-        // (From SILENT_AFTER_MS on, a stall can't be told from the channel going quiet.)
         let before_stall = rig.played.len();
         for _ in 0..3 {
-            rig.play();
+            rig.play(); // 30 ms with nothing from the capture side
         }
         rig.capture(3);
-        for _ in 0..5 {
+        for _ in 0..400 {
             rig.capture(1);
             rig.play();
         }
-        assert!(rig.delay_ms() <= settled + 1, "the audio that arrived late must not stay in the queue as delay: {} ms, was {settled} ms", rig.delay_ms());
-
-        // From here on nothing may be cut again: the listener has had their one gap.
-        let after_recovery = rig.played.len();
-        for _ in 0..300 {
-            rig.capture(1);
-            rig.play();
-        }
-        let later = &rig.played[after_recovery..];
-        assert!(later.windows(2).all(|w| w[1] == w[0] + 1.0), "audio was cut again after the gap had passed");
-        let silent = rig.played[before_stall..after_recovery].iter().filter(|&&s| s == 0.0).count();
+        let heard: Vec<f32> = rig.played[before_stall..].iter().copied().filter(|&s| s != 0.0).collect();
+        // Steps of at most 1.02 (easing), plus f32 rounding on a ramp in the hundred thousands.
+        assert!(heard.windows(2).all(|w| w[1] > w[0] && w[1] - w[0] < 1.1), "nothing may be cut after a stall");
+        let silent = rig.played[before_stall..].iter().filter(|&&s| s == 0.0).count();
         assert!(silent > 0 && silent <= 3 * PACKET, "the stall itself is heard as silence, once: {silent} samples");
+        assert!(rig.delay_ms() <= CUSHION_MS + 3, "four seconds later the delay the stall left has eased out (to the cushion plus the 2 ms slack): {} ms, was {settled} ms", rig.delay_ms());
     }
 }
