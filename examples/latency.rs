@@ -6,7 +6,12 @@
 //! Not included: what any output adds on its own (DAC, a wireless headset's radio link). Those are
 //! the same with or without freeseries.
 //!
-//! cargo run --release --example latency -- <virtual#> <output#> [settle seconds, default 0.4]
+//! cargo run --release --example latency -- <virtual#> <output#> [settle seconds, default 0.4] [render]
+//!
+//! With `render` the reference is not the source device's loopback but the noise itself, stamped
+//! with the time each buffer was due to play: the whole way from "an app plays" to "the output
+//! plays it". Played straight into a device (same number twice) that is the device's own delay;
+//! through the engine it is the total, and the difference is what FreeSeries adds.
 
 //! Do not run this right before `soak.rs`: for a while after this tool's noise stream closes, the
 //! virtual device's loopback delivers a few phase slips (seen 2026-09-22 with no engine in the path).
@@ -53,14 +58,21 @@ fn record(device: &cpal::Device) -> Result<(cpal::Stream, Arc<Mutex<Recording>>,
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arg = |n: usize| std::env::args().nth(n);
-    let usage = "usage: latency <virtual#> <output#>";
+    let usage = "usage: latency <virtual#> <output#> [settle] [render]";
+    let from_render = std::env::args().any(|a| a == "render");
     let devices: Vec<cpal::Device> = cpal::default_host().output_devices()?.collect();
     let source = devices.get(arg(1).ok_or(usage)?.parse::<usize>()?).ok_or("no such virtual device")?;
     let output = devices.get(arg(2).ok_or(usage)?.parse::<usize>()?).ok_or("no such output device")?;
     println!("into: {}\nout of: {}", source.description()?.name(), output.description()?.name());
 
-    let (in_stream, heard_in, rate) = record(source)?;
     let (out_stream, heard_out, out_rate) = record(output)?;
+    let heard_in = Arc::new(Mutex::new(Recording::default()));
+    let (in_stream, rate) = if from_render { (None, out_rate) } else {
+        let (stream, rec, rate) = record(source)?;
+        heard_in.lock().unwrap().start_ns = None;
+        (Some((stream, rec)), rate)
+    };
+    let heard_in = in_stream.as_ref().map_or(heard_in.clone(), |(_, rec)| rec.clone());
     if rate != out_rate {
         return Err("the two devices run at different sample rates".into());
     }
@@ -69,14 +81,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = source.default_output_config()?;
     let channels = cfg.channels() as usize;
     let mut seed = 0x2545_F491u32;
+    let reference = if from_render { Some(heard_in.clone()) } else { None };
     let noise = source.build_output_stream(
         cfg.config(),
-        move |data: &mut [f32], _: &_| {
+        move |data: &mut [f32], info: &cpal::OutputCallbackInfo| {
             for frame in data.chunks_exact_mut(channels) {
                 seed ^= seed << 13;
                 seed ^= seed >> 17;
                 seed ^= seed << 5;
                 frame.fill((seed as f32 / u32::MAX as f32 - 0.5) * 0.06);
+            }
+            if let Some(r) = &reference {
+                let mut r = r.lock().unwrap();
+                let at = info.timestamp().playback.as_nanos();
+                match r.start_ns {
+                    None => r.start_ns = Some(at),
+                    Some(start) => {
+                        let expected = start + (r.mono.len() as f64 / rate * 1e9) as u128;
+                        if at.abs_diff(expected) > 5_000_000 {
+                            r.gaps += 1;
+                        }
+                    }
+                }
+                r.mono.extend(data.chunks_exact(channels).map(|f| f[0]));
             }
         },
         |e| eprintln!("playback error: {e}"),
@@ -87,7 +114,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // and eases it out over a few seconds: pass a longer settle time to measure where it ends up.
     let settle: f32 = std::env::args().nth(3).and_then(|s| s.parse().ok()).unwrap_or(0.4);
     std::thread::sleep(Duration::from_secs_f32(settle));
-    in_stream.play()?;
+    if let Some((stream, _)) = &in_stream {
+        stream.play()?;
+    }
     out_stream.play()?;
     std::thread::sleep(Duration::from_secs(4));
     drop((in_stream, out_stream, noise));

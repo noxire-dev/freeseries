@@ -252,6 +252,13 @@ unsafe fn run(mut s: Running, dsp: &Arc<Dsp>, stop: &AtomicBool) -> Result<(), S
     let max_queued = s.tuning.per_ms * 100; // hard ceiling on a channel's delay
     let window = s.tuning.per_ms * 1000;
     let mut played = 0usize;
+    // The device tells us how much of its buffer it has left each time it wakes us. Filling all of
+    // the rest is the whole 22 ms buffer of delay on a device that empties it between wakes (the
+    // Arctis reads 30-40 ms added where the monitor reads 9); two periods ahead is enough for any
+    // wake jitter seen (3 ms) and keeps the render side at roughly one period.
+    let period = s.rate as usize / 100; // frames; every endpoint on this PC runs 10 ms periods
+    let ahead = (2 * period) as u32;
+    let mut stats = (u32::MAX, 0u32, 0u64, 0u32); // padding at wake: min, max, sum, count, over the first seconds
     let result = loop {
         if stop.load(Relaxed) {
             break Ok(());
@@ -264,10 +271,17 @@ unsafe fn run(mut s: Running, dsp: &Arc<Dsp>, stop: &AtomicBool) -> Result<(), S
             break Err(e);
         }
 
-        let space = match s.render.GetCurrentPadding() {
-            Ok(padding) => s.out_size - padding,
+        let padding = match s.render.GetCurrentPadding() {
+            Ok(p) => p,
             Err(e) => break Err(format!("output: {e}")),
         };
+        if stats.3 < 500 {
+            stats = (stats.0.min(padding), stats.1.max(padding), stats.2 + padding as u64, stats.3 + 1);
+            if stats.3 == 500 {
+                log::info!("output buffer {} frames; at wake the device still held {}..{} frames, {} on average", s.out_size, stats.0, stats.1, stats.2 / 500);
+            }
+        }
+        let space = (s.out_size - padding).min(ahead.saturating_sub(padding));
         if space == 0 {
             continue;
         }

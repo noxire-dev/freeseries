@@ -63,9 +63,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for e in &all {
             let client: IAudioClient3 = unsafe { e.device.Activate(CLSCTX_ALL, None)? };
             match periods(&client) {
-                Ok((p, _)) => {
+                Ok((p, f)) => {
                     let ms = |frames: u32| frames as f64 * 1000.0 / p.rate as f64;
-                    println!("{:<52} {} Hz {} ch  default {:.2} ms  min {:.2} ms  max {:.2} ms  (steps of {} frames)", e.name, p.rate, p.channels, ms(p.default), ms(p.min), ms(p.max), p.fundamental);
+                    // The render buffer Windows hands out for this endpoint: initialised, never started, so nothing plays.
+                    let buffer = unsafe { client.Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 0, 0, f, None).and_then(|_| client.GetBufferSize()) }.map_or("?".into(), |b| format!("{b} frames = {:.1} ms", ms(b)));
+                    println!("{:<52} {} Hz {} ch  period {:.2} ms (min {:.2}, max {:.2})  render buffer {buffer}", e.name, p.rate, p.channels, ms(p.default), ms(p.min), ms(p.max));
                 }
                 Err(err) => println!("{:<52} no IAudioClient3 periods: {err}", e.name),
             }

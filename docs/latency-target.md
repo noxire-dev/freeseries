@@ -23,8 +23,7 @@ read the source itself, "unverified" where only a search snippet or a forum clai
 | FxSound | users report ~0.5 s | forum, unverified |
 | SteelSeries Sonar | no official figure; ~40 ms from an osu! player's in-game offset | subjective, unverified |
 | Dolby Atmos / DTS / Windows Sonic | forum claims from 30 to 250 ms | unverified |
-| FreeSeries today (cpal engine) | 29-48 ms | measured, examples/latency.rs |
-| FreeSeries raw WASAPI spike | 7-8 ms | measured, examples/lowlat.rs |
+| FreeSeries (either backend) | ~35 ms over playing straight into the device | measured 2026-09-23, examples/latency.rs `render` mode; about 25 of it is a second shared-mode pass at 10 ms periods plus the virtual device's tap |
 
 Wireless link for context: Arctis Nova Pro Wireless 2.4 GHz ~38 ms and Bluetooth ~184 ms per a
 review snippet (unverified); Bluetooth SBC 100-270 ms, aptX LL ~40 ms.
