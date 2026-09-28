@@ -261,34 +261,16 @@ export function Presets(p: {
   current: string;
   /** The channel a chosen sound goes to. Undefined before the virtual device exists. */
   target: string | undefined;
-  /** The output the correction belongs to. Undefined when the user hasn't added any yet. */
-  output: string | undefined;
   sound: Preset | undefined;
-  correction: NamedPreset | null;
   onLoad(named: NamedPreset): void;
-  onCorrection(correction: NamedPreset | null): void;
-  onLoadAutoEq(entry: AutoEqEntry): Promise<void>;
+  onDevices(): void;
   onImport(name: string, text: string): Promise<void>;
   onSave(name: string): void;
   onDelete(name: string): void;
 }) {
   const [name, setName] = useState("");
-  const [query, setQuery] = useState("");
-  const [index, setIndex] = useState<AutoEqEntry[]>();
   const [error, setError] = useState<string>();
-  const [loading, setLoading] = useState<string>();
   const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    if (query.trim().length < 2 || index) return;
-    p.autoEq.index().then(setIndex, (e) => setError(String(e.message ?? e)));
-  }, [query, index, p.autoEq]);
-
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-  const results = useMemo(
-    () => (index && query.trim().length >= 2 ? index.filter((e) => words.every((w) => e.name.toLowerCase().includes(w))).slice(0, 40) : []),
-    [index, query],
-  );
 
   const soundRow = (named: NamedPreset, removable: boolean) => (
     <li key={named.name} className={`row${p.current === named.name ? " is-current" : ""}`}>
@@ -317,6 +299,14 @@ export function Presets(p: {
   return (
     <div className="page">
       <h2>Sound for {p.target}</h2>
+      <p className="hint">
+        A sound is what you switch between games and moods. It sits on top of your headphones' correction, which belongs to the device and
+        lives in{" "}
+        <button className="link" onClick={p.onDevices}>
+          Devices
+        </button>
+        .
+      </p>
       <ul className="group">{BUILTIN.map((named) => soundRow(named, false))}</ul>
       <ul className="group group-below">
         {p.library.map((named) => soundRow(named, true))}
@@ -361,39 +351,54 @@ export function Presets(p: {
         </button>
         <span className="hint">Equalizer APO format, the one Peace and AutoEq use.</span>
       </div>
+      {error && <p className="notice">{error}</p>}
 
-      {p.output && (
-        <>
-      <h2>Headphone correction for {p.output}</h2>
-      <ul className="group">
-        <li className="row">
-          <span className="row-title">{p.correction ? p.correction.name : "None"}</span>
-          {p.correction && (
-            <>
-              <span className="row-detail">{p.correction.preset.bands.length} bands</span>
-              <button className="link" onClick={() => p.onCorrection(null)}>
-                Remove
-              </button>
-            </>
-          )}
-        </li>
-      </ul>
-      <p className="hint hint-below">
-        Measured corrections from the AutoEq project, downloaded when you pick one. They assume your headset's own EQ is flat, so switch that off
-        first or the two will stack.
+    </div>
+  );
+}
+
+/** The AutoEq search: measured corrections for a headphone model, one of which the output can carry. */
+function CorrectionPicker(p: { autoEq: AutoEqApi; forOutput: string; current: NamedPreset | null; onPick(entry: AutoEqEntry): Promise<void>; onClear(): void }) {
+  const [query, setQuery] = useState("");
+  const [index, setIndex] = useState<AutoEqEntry[]>();
+  const [error, setError] = useState<string>();
+  const [loading, setLoading] = useState<string>();
+  useEffect(() => {
+    if (query.trim().length < 2 || index) return;
+    p.autoEq.index().then(setIndex, (e) => setError(String(e.message ?? e)));
+  }, [query, index, p.autoEq]);
+  const words = query.toLowerCase().split(/\\s+/).filter(Boolean);
+  const results = useMemo(
+    () => (index && query.trim().length >= 2 ? index.filter((e) => words.every((w) => e.name.toLowerCase().includes(w))).slice(0, 40) : []),
+    [index, query],
+  );
+  return (
+    <div className="picker">
+      <h3 className="picker-title">Headphone correction for {p.forOutput}</h3>
+      <input className="text text-search" type="search" autoFocus placeholder="Search by model, e.g. AirPods Pro" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search headphones" />
+      <p className="hint">
+        Measured by the AutoEq project, downloaded when you pick one. They assume the headset's own EQ is off; if it has one, switch it off or
+        the two will stack.
+        {p.current && (
+          <>
+            {" "}
+            <button className="link" onClick={p.onClear}>
+              Remove the current correction
+            </button>
+          </>
+        )}
       </p>
-      <input className="text text-search" type="search" placeholder="Search by model, e.g. Arctis Nova Pro" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search headphones" />
       {error && <p className="notice">{error}</p>}
       {query.trim().length >= 2 && !index && !error && <p className="hint">Loading the headphone list…</p>}
       {index && query.trim().length >= 2 && results.length === 0 && <p className="hint">No model matches “{query}”. Try fewer words.</p>}
       {results.length > 0 && (
         <ul className="group">
           {results.map((entry) => (
-            <li key={entry.path} className={`row${p.correction?.name === entry.name ? " is-current" : ""}`}>
+            <li key={entry.path} className={`row${p.current?.name === entry.name ? " is-current" : ""}`}>
               <svg className="check" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6.5 5 9l4.5-5.5" /></svg>
               <span className="row-title">{entry.name}</span>
               <span className="row-detail">{entry.source}</span>
-              {p.correction?.name === entry.name && loading !== entry.path ? (
+              {p.current?.name === entry.name && loading !== entry.path ? (
                 <span className="row-state">In use</span>
               ) : (
                 <button
@@ -402,7 +407,7 @@ export function Presets(p: {
                   onClick={() => {
                     setLoading(entry.path);
                     setError(undefined);
-                    p.onLoadAutoEq(entry)
+                    p.onPick(entry)
                       .catch((e) => setError(`Couldn't download that correction (${e.message ?? e}). Check your connection and try again.`))
                       .finally(() => setLoading(undefined));
                   }}
@@ -413,8 +418,6 @@ export function Presets(p: {
             </li>
           ))}
         </ul>
-      )}
-        </>
       )}
     </div>
   );
@@ -436,8 +439,14 @@ export function Devices(p: {
   onRefresh(): void;
   onSetup(): void;
   setup: SetupApi;
+  autoEq: AutoEqApi;
+  onCorrection(outputId: string, correction: NamedPreset | null): void;
+  onLoadAutoEq(outputId: string, entry: AutoEqEntry): Promise<void>;
+  /** Open the correction picker for this output on arrival (the Mixer's output strip sends people here). */
+  openCorrection?: string;
 }) {
   const virtual = p.detected?.id ?? p.source;
+  const [picking, setPicking] = useState<string | null>(p.openCorrection ?? null);
   // Which device Windows plays to can change behind our back, so it is asked again every few seconds.
   const [defaultId, setDefaultId] = useState<string | null>();
   useEffect(() => {
@@ -516,7 +525,8 @@ export function Devices(p: {
         {p.autoSwitch
           ? "Drag them into the order you prefer. FreeSeries plays on the highest one that's switched on: when it goes off, audio moves down the list, and when it comes back, audio moves back up."
           : "FreeSeries only plays on the first one. Drag another to the top to use that instead."}{" "}
-        Each keeps its own EQ. Leave spatial sound off on these so it isn't applied twice.
+        Each carries a correction for the headphones themselves, measured by AutoEq: the sound presets in the Mixer sit on top of it. Leave
+        spatial sound off on these so it isn't applied twice.
       </p>
       {p.outputs.length > 0 && (
         <ol className="group" onDragLeave={(e) => e.currentTarget.contains(e.relatedTarget as Node) || setOver(null)}>
@@ -550,7 +560,9 @@ export function Devices(p: {
               <span className="row-order">{i + 1}</span>
               <span className="row-title">{p.devices.find((d) => d.id === o.id)?.name ?? (o.name || "Disconnected device")}</span>
               {o.id === p.activeId ? <span className="badge">Playing</span> : !p.devices.some((d) => d.id === o.id) && <span className="row-detail">Not connected</span>}
-              {o.correction && <span className="row-detail">{o.correction.name}</span>}
+              <button className="link" onClick={() => setPicking(picking === o.id ? null : o.id)} title="Headphone correction">
+                {o.correction ? o.correction.name : "No correction"}
+              </button>
               <button className="icon-button" onClick={() => move(i, i - 1)} disabled={i === 0} aria-label={`Move ${o.name} up`} title="Prefer this one more">
                 <svg viewBox="0 0 12 12"><path d="M2.5 7.5 6 4l3.5 3.5" /></svg>
               </button>
@@ -563,6 +575,16 @@ export function Devices(p: {
             </li>
           ))}
         </ol>
+      )}
+      {picking && p.outputs.some((o) => o.id === picking) && (
+        <CorrectionPicker
+          key={picking}
+          autoEq={p.autoEq}
+          forOutput={p.devices.find((d) => d.id === picking)?.name ?? p.outputs.find((o) => o.id === picking)?.name ?? "this output"}
+          current={p.outputs.find((o) => o.id === picking)?.correction ?? null}
+          onPick={(entry) => p.onLoadAutoEq(picking, entry)}
+          onClear={() => p.onCorrection(picking, null)}
+        />
       )}
       {p.outputs.length > 1 && (
         <ul className="group group-below">
@@ -948,7 +970,7 @@ export function Mixer(p: {
   levels(): Promise<Record<string, number>>;
   channels: Strip[];
   presets: NamedPreset[];
-  output: { name: string; correction: string; playing: boolean } | undefined;
+  output: { name: string; correction: NamedPreset | null; playing: boolean } | undefined;
   /** The headset the output belongs to, while it is switched on. */
   headset: HeadsetState | undefined;
   balance: number;
@@ -957,6 +979,8 @@ export function Mixer(p: {
   onChannel(key: string, next: SavedChannel): void;
   /** Open that channel's sound in the Equalizer. */
   onEdit(key: string): void;
+  /** Open the output's headphone correction in Devices. */
+  onOutput(): void;
   /** The user moved an app: remembered, so it can be put back after FreeSeries was closed. */
   onAssign(app: string, key: string): void;
   onRefresh(): void;
@@ -1177,11 +1201,16 @@ export function Mixer(p: {
 
         {p.output && (
           <section className="strip-col strip-out" aria-label="Output">
+            <div className="strip-eq">
+              <button className="eq-thumb-button" onClick={p.onOutput} title="The headphone correction for this output. Change it in Devices." aria-label="Headphone correction">
+                <EqThumb preset={p.output.correction?.preset} />
+              </button>
+              <span className="strip-correction">{p.output.correction ? p.output.correction.name : "No correction"}</span>
+            </div>
             <div className="strip-fader">{meter("out")}</div>
             <h3 className="strip-plate">
               {p.output.playing ? "Output" : "Stopped"}
               <small>{p.output.name}</small>
-              <small>{p.output.correction}</small>
               {p.headset && (p.headset.battery !== null || p.headset.micMuted) && (
                 <small>
                   {p.headset.battery !== null && `Battery ${Math.round(p.headset.battery * 100)}%`}

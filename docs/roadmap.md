@@ -40,6 +40,8 @@ The EQ editor needs love and the app reads as an open-source project. Do it as a
 
 - **Headset modules (2026-09-21).** Per-headset hardware support is a table, one file per headset, community-maintained except the Arctis Nova Pro Wireless (the only one we own). Replaces `arctis.rs`. The ChatMix dial drives the Game / Media balance; battery and mic mute show on the output strip. Details, the protocol and how to add a headset: `docs/headsets.md`. Microphone processing research and the route to try first (VB-CABLE as the virtual mic, our own capture APO as the fallback): `docs/mic.md`. Later, on the same kind of seam: clip capture with one track per channel (the engine already has every channel separately).
 
+- **Where the correction lives in the UI (2026-09-28).** The user picked an AutoEq correction on the Presets page and could not find it in the Mixer: two kinds of preset on one page, and the Mixer showed the correction as one small line on the output strip while every channel strip had a picker for its sound. Now a correction is chosen on the Devices page, on the output it belongs to (a "No correction" / name link on each output row opens the AutoEq search under the list, titled with the output); the Presets page holds sounds only and says where corrections live; the Mixer's output strip draws the correction curve the way channel strips draw their sound, with the name under it, and clicking it opens Devices on that output. Checked in the browser preview.
+
 Still to do from the same list: switch the sound preset when a game launches (needs foreground-process watching and a rules UI), the `IAudioClient3` backend, README / updater / code signing for a public release.
 
 ## 4. Sonar preset import

@@ -1523,7 +1523,30 @@ select option {
   flex: 0 0 140px;
   min-width: 0;
   margin-left: 10px;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+/* The output strip's plate for its correction: a name under the curve, where a channel has its picker. */
+.strip-correction {
+  display: block;
+  padding: 0 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--label-2);
+}
+
+/* The correction picker opens under the outputs list on the Devices page. */
+.picker {
+  margin-top: 10px;
+}
+
+.picker-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--label-2);
 }
 
 .crossfade {

@@ -55,6 +55,8 @@ export default function App(p: {
   const [mixer, setMixer] = useState(saved.channels);
   const [balance, setBalance] = useState(saved.balance);
   const [editingKey, setEditingKey] = useState("main");
+  // Which output's correction the Devices page should open with, when another page sends people there.
+  const [openCorrection, setOpenCorrection] = useState<string>();
   const [refused, setRefused] = useState<string[]>([]);
   const [bypass, setBypass] = useState(saved.bypass);
   const [library, setLibrary] = useState(saved.library);
@@ -234,10 +236,9 @@ export default function App(p: {
   viewRef.current = view;
   const analyserOff = useRef(0);
 
-  const applyCorrection = (correction: SavedOutput["correction"]) => {
-    if (!editing) return;
-    setOutputs(outputs.map((o) => (o.id === editing.id ? { ...o, correction } : o)));
-    if (editing.id === activeId) engine.setPreset(correction?.preset ?? FLAT);
+  const applyCorrection = (outputId: string, correction: SavedOutput["correction"]) => {
+    setOutputs(outputs.map((o) => (o.id === outputId ? { ...o, correction } : o)));
+    if (outputId === activeId) engine.setPreset(correction?.preset ?? FLAT);
   };
 
   // Shortcuts arrive while a game has the screen, so they act on the latest state without the
@@ -291,9 +292,10 @@ export default function App(p: {
       return (await p.autoEq.index()).filter((e) => words.every((w) => e.name.toLowerCase().includes(w))).slice(0, 20).map((e) => e.name);
     },
     useCorrection: async (name) => {
-      if (name === null) return applyCorrection(null), true;
+      if (!editing) return false;
+      if (name === null) return applyCorrection(editing.id, null), true;
       const entry = (await p.autoEq.index()).find((e) => e.name === name);
-      if (entry) applyCorrection({ name: entry.name, preset: await engine.parsePreset(await p.autoEq.fetchPreset(entry)) });
+      if (entry) applyCorrection(editing.id, { name: entry.name, preset: await engine.parsePreset(await p.autoEq.fetchPreset(entry)) });
       return !!entry;
     },
   };
@@ -429,7 +431,7 @@ export default function App(p: {
             apps={p.apps}
             levels={engine.levels}
             presets={sounds}
-            output={editing && { name: nameOf(activeId ?? editing.id), correction: editing.correction?.name ?? "No correction", playing: activeId !== undefined }}
+            output={editing && { name: nameOf(activeId ?? editing.id), correction: editing.correction ?? null, playing: activeId !== undefined }}
             headset={headset?.online && headset.model && nameOf(activeId ?? editing?.id ?? "").includes(headset.model.replace(/ Wireless$/, "")) ? headset : undefined}
             channels={channels.map((c) => ({ key: c.key, label: c.label, deviceId: c.device.id, device: c.device.name.replace(/ \(.*\)$/, ""), ...(mixer[c.key] ?? DEFAULT_CHANNEL) }))} // the name to look for in an app's device list
             balance={balance}
@@ -441,6 +443,10 @@ export default function App(p: {
               setEditingKey(key);
               setView("equalizer");
             }}
+            onOutput={() => {
+              setOpenCorrection(editing?.id);
+              setView("devices");
+            }}
             onRefresh={() => engine.listOutputs().then(setDevices)}
           />
         )}
@@ -450,12 +456,12 @@ export default function App(p: {
             library={library}
             current={sound.presetName}
             target={editingChannel && (channels.length > 1 ? editingChannel.label : "everything you play")}
-            output={editing && nameOf(editing.id)}
             onLoad={(named) => applyPreset(named.preset, named.name)}
             sound={sound.preset}
-            correction={editing?.correction ?? null}
-            onCorrection={applyCorrection}
-            onLoadAutoEq={async (entry) => applyCorrection({ name: entry.name, preset: await engine.parsePreset(await p.autoEq.fetchPreset(entry)) })}
+            onDevices={() => {
+              setOpenCorrection(editing?.id);
+              setView("devices");
+            }}
             onImport={async (name, text) => applyPreset(await engine.parsePreset(text), name)}
             onSave={(name) => {
               if (!editingChannel) return;
@@ -532,6 +538,10 @@ export default function App(p: {
             onRefresh={() => engine.listOutputs().then(setDevices)}
             onSetup={() => setView("setup")}
             setup={p.setup}
+            autoEq={p.autoEq}
+            onCorrection={applyCorrection}
+            onLoadAutoEq={async (id, entry) => applyCorrection(id, { name: entry.name, preset: await engine.parsePreset(await p.autoEq.fetchPreset(entry)) })}
+            openCorrection={openCorrection}
           />
         )}
       </main>
