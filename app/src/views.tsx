@@ -377,8 +377,9 @@ function CorrectionPicker(p: { autoEq: AutoEqApi; forOutput: string; current: Na
       <h3 className="picker-title">Headphone correction for {p.forOutput}</h3>
       <input className="text text-search" type="search" autoFocus placeholder="Search by model, e.g. AirPods Pro" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search headphones" />
       <p className="hint">
-        Measured by the AutoEq project, downloaded when you pick one. They assume the headset's own EQ is off; if it has one, switch it off or
-        the two will stack.
+        Measured by the AutoEq project on a test rig, downloaded when you pick one. Choose the model you are wearing, not one you like the
+        sound of: a correction only makes sense for the headphones it was measured on. It assumes the headset's own EQ is off; if it has
+        one, switch it off or the two will stack.
         {p.current && (
           <>
             {" "}
@@ -525,8 +526,9 @@ export function Devices(p: {
         {p.autoSwitch
           ? "Drag them into the order you prefer. FreeSeries plays on the highest one that's switched on: when it goes off, audio moves down the list, and when it comes back, audio moves back up."
           : "FreeSeries only plays on the first one. Drag another to the top to use that instead."}{" "}
-        Each carries a correction for the headphones themselves, measured by AutoEq: the sound presets in the Mixer sit on top of it. Leave
-        spatial sound off on these so it isn't applied twice.
+        Every headphone model has its own bumps; a correction cancels them so yours sound neutral, the way the game was mixed. Pick the one
+        for the headphones you wear, once. The sound presets in the Mixer are your taste on top of that. Leave spatial sound off on these so
+        it isn't applied twice.
       </p>
       {p.outputs.length > 0 && (
         <ol className="group" onDragLeave={(e) => e.currentTarget.contains(e.relatedTarget as Node) || setOver(null)}>
