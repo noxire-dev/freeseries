@@ -21,6 +21,8 @@ pub struct DeviceInfo {
     pub name: String,
     pub channels: u16,
     pub sample_rate: u32,
+    /// Spatial sound (Atmos, DTS, Sonic) is switched on for this endpoint in Windows.
+    pub spatial: bool,
 }
 
 /// What one audio session does: capture everything played into each source, mix, play on `to`.
@@ -439,7 +441,7 @@ mod tests {
     impl AudioBackend for Fake {
         type Session = ();
         fn outputs(&self) -> Result<Vec<DeviceInfo>, String> {
-            Ok(["headset", "monitor"].map(|id| DeviceInfo { id: id.into(), name: id.into(), channels: 2, sample_rate: 48000 }).into())
+            Ok(["headset", "monitor"].map(|id| DeviceInfo { id: id.into(), name: id.into(), channels: 2, sample_rate: 48000, spatial: false }).into())
         }
         fn open(&self, mix: &Mix, _: Arc<Dsp>, on_lost: Lost) -> Result<(), String> {
             self.results.lock().unwrap().pop_front().unwrap_or(Ok(()))?;

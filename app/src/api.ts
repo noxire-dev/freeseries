@@ -4,7 +4,8 @@
 export type Kind = "peak" | "lowShelf" | "highShelf";
 export interface Band { kind: Kind; fc: number; gainDb: number; q: number }
 export interface Preset { preampDb: number; bands: Band[] }
-export interface Device { id: string; name: string; channels: number; sampleRate: number }
+/** `spatial`: spatial sound (Atmos, DTS, Sonic) is switched on for it in Windows. */
+export interface Device { id: string; name: string; channels: number; sampleRate: number; spatial?: boolean }
 /** The virtual device apps play into, and the real outputs in order of preference, each with its own EQ. */
 export interface Plan {
   /** One per virtual device apps play into, each with its own volume (0 to 1, linear) and EQ. Mixed together. */
@@ -308,9 +309,9 @@ export function mockEngine(): EngineApi {
   const kinds: Record<string, Kind> = { PK: "peak", LSC: "lowShelf", LS: "lowShelf", HSC: "highShelf", HS: "highShelf" };
   return {
     listOutputs: async () => [
-      ...(preview.installed ? [{ id: "wasapi:fx", name: "FreeSeries (FxSound Audio Enhancer)", channels: 2, sampleRate: 48000 }] : []),
+      ...(preview.installed ? [{ id: "wasapi:fx", name: "FreeSeries (FxSound Audio Enhancer)", channels: 2, sampleRate: 48000, spatial: true }] : []),
       ...(preview.installed && preview.media ? [{ id: "wasapi:fx2", name: "FreeSeries Media (2- FxSound Audio Enhancer)", channels: 2, sampleRate: 48000 }] : []),
-      { id: "wasapi:hdmi", name: "Odyssey G65B (NVIDIA High Definition Audio)", channels: 2, sampleRate: 48000 },
+      { id: "wasapi:hdmi", name: "Odyssey G65B (NVIDIA High Definition Audio)", channels: 2, sampleRate: 48000, spatial: true },
       { id: "wasapi:rtk", name: "Speakers (Realtek(R) Audio)", channels: 2, sampleRate: 48000 },
       { id: "wasapi:arctis", name: "Headphones (Arctis Nova Pro Wireless)", channels: 2, sampleRate: 48000 },
     ],

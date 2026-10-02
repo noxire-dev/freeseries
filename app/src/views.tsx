@@ -458,6 +458,8 @@ export function Devices(p: {
   }, [p.setup]);
   const extras = p.devices.filter((d) => isVirtualDevice(d) && d.id !== virtual && /^freeseries /i.test(d.name)).map((d) => d.name.replace(/ \(.*\)$/, ""));
   const chosen = new Set(p.outputs.map((o) => o.id));
+  // Spatial sound on the FreeSeries device and on an output too: everything goes through it twice.
+  const doubled = p.devices.find((d) => d.id === virtual)?.spatial ? p.devices.filter((d) => chosen.has(d.id) && d.spatial).map((d) => d.name.replace(/ \(.*\)$/, "")) : [];
   const available = p.devices.filter((d) => d.id !== virtual && !chosen.has(d.id) && !isVirtualDevice(d));
   // Reordering: drag a row, or use its arrow buttons (keyboard and screen readers).
   const [drag, setDrag] = useState<number | null>(null);
@@ -587,6 +589,15 @@ export function Devices(p: {
           onPick={(entry) => p.onLoadAutoEq(picking, entry)}
           onClear={() => p.onCorrection(picking, null)}
         />
+      )}
+      {doubled.length > 0 && (
+        <p className="notice">
+          Spatial sound is also switched on for {doubled.join(" and ")}. Sound that was already made spatial on the FreeSeries device goes
+          through it a second time there, and comes out hollow. Set Spatial sound to Off for {doubled.length === 1 ? "it" : "them"}.
+          <button className="link" onClick={p.setup.openSoundSettings}>
+            Open Sound settings
+          </button>
+        </p>
       )}
       {p.outputs.length > 1 && (
         <ul className="group group-below">

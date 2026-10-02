@@ -500,7 +500,7 @@ mod tests {
             }
         };
         wait_for("online", &|s| s.online == Some(true));
-        let toy = DeviceInfo { id: "x".into(), name: "Speakers (Toy Headset)".into(), channels: 2, sample_rate: 48000 };
+        let toy = DeviceInfo { id: "x".into(), name: "Speakers (Toy Headset)".into(), channels: 2, sample_rate: 48000, spatial: false };
         assert!(headset.is_on(&toy));
 
         headset.set_dial(true);
