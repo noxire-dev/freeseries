@@ -51,6 +51,7 @@ export default function App(p: {
   const [outputs, setOutputs] = useState<SavedOutput[]>(saved.outputs);
   const [running, setRunning] = useState(saved.running && p.autoStart);
   const [autoSwitch, setAutoSwitch] = useState(saved.autoSwitch);
+  const [chosenOutput, setChosenOutput] = useState<string | null>(saved.chosen ?? null);
   const [hotkeysOn, setHotkeysOn] = useState(saved.hotkeys);
   const [mixer, setMixer] = useState(saved.channels);
   const [balance, setBalance] = useState(saved.balance);
@@ -94,8 +95,8 @@ export default function App(p: {
   }, [engine]);
 
   useEffect(
-    () => settings.save({ source, outputs, running, autoSwitch, hotkeys: hotkeysOn, channels: mixer, balance, bypass, library, assignments, dial: dialOn, display: displayOn, screen, headsetSettings, agent: agentOn, agentToken }),
-    [source, outputs, running, autoSwitch, hotkeysOn, mixer, balance, bypass, library, assignments, dialOn, displayOn, screen, headsetSettings, agentOn, agentToken],
+    () => settings.save({ source, outputs, running, autoSwitch, chosen: chosenOutput, hotkeys: hotkeysOn, channels: mixer, balance, bypass, library, assignments, dial: dialOn, display: displayOn, screen, headsetSettings, agent: agentOn, agentToken }),
+    [source, outputs, running, autoSwitch, chosenOutput, hotkeysOn, mixer, balance, bypass, library, assignments, dialOn, displayOn, screen, headsetSettings, agentOn, agentToken],
   );
   useEffect(() => void p.hotkeys.setEnabled(hotkeysOn).then(setRefused, () => {}), [p.hotkeys, hotkeysOn]);
 
@@ -123,7 +124,9 @@ export default function App(p: {
   }));
 
   // With switching off the engine only ever hears about the first output, so it can't move.
-  const planned = autoSwitch ? outputs : outputs.slice(0, 1);
+  // The output picked by hand goes first; the order still stands behind it, so audio has somewhere to go when it switches off.
+  const ordered = [...outputs.filter((o) => o.id === chosenOutput), ...outputs.filter((o) => o.id !== chosenOutput)];
+  const planned = autoSwitch ? ordered : ordered.slice(0, 1);
   const latest = useRef({ planned, plannedChannels });
   latest.current = { planned, plannedChannels };
   const activeNow = status.state === "running" ? status.output : undefined;
@@ -528,6 +531,8 @@ export default function App(p: {
             running={running}
             autoSwitch={autoSwitch}
             onAutoSwitch={setAutoSwitch}
+            chosen={chosenOutput}
+            onChoose={setChosenOutput}
             status={status}
             onSource={setSource}
             onOutputs={setOutputs}

@@ -27,6 +27,8 @@ export interface Saved {
   running: boolean;
   /** Move between outputs by itself. Off: only the first output is ever used. */
   autoSwitch: boolean;
+  /** An output the user picked to play on now, ahead of the order, until they hand it back. */
+  chosen: string | null;
   /** Global keyboard shortcuts for bypass and switching the sound preset. */
   hotkeys: boolean;
   /** Mixer settings by channel key ("main", "chat", ...). */
@@ -55,7 +57,7 @@ export interface SettingsStore {
   save(saved: Saved): void;
 }
 
-const EMPTY: Saved = { source: null, outputs: [], running: false, autoSwitch: true, hotkeys: true, channels: {}, balance: 0, bypass: false, library: [], assignments: {}, dial: true, display: true, screen: DEFAULT_SCREEN, headsetSettings: {}, agent: false, agentToken: "" };
+const EMPTY: Saved = { source: null, outputs: [], running: false, autoSwitch: true, chosen: null, hotkeys: true, channels: {}, balance: 0, bypass: false, library: [], assignments: {}, dial: true, display: true, screen: DEFAULT_SCREEN, headsetSettings: {}, agent: false, agentToken: "" };
 
 /** 0.1.x stored a single route with one global preset. */
 function fromRoute(raw: Record<string, any>): Record<string, any> {

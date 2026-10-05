@@ -432,6 +432,9 @@ export function Devices(p: {
   activeId: string | undefined;
   running: boolean;
   autoSwitch: boolean;
+  /** The output picked by hand to play on now, ahead of the order. */
+  chosen: string | null;
+  onChoose(id: string | null): void;
   status: Status;
   onAutoSwitch(enabled: boolean): void;
   onSource(id: string): void;
@@ -526,8 +529,8 @@ export function Devices(p: {
       <h2>You listen on</h2>
       <p className="hint">
         {p.autoSwitch
-          ? "Drag them into the order you prefer. FreeSeries plays on the highest one that's switched on: when it goes off, audio moves down the list, and when it comes back, audio moves back up."
-          : "FreeSeries only plays on the first one. Drag another to the top to use that instead."}{" "}
+          ? "Drag them into the order you prefer. FreeSeries plays on the highest one that's switched on: when it goes off, audio moves down the list, and when it comes back, audio moves back up. To listen on another one right now, press Play here."
+          : "FreeSeries only plays on the first one. Press Play here on another to use that instead."}{" "}
         Every headphone model has its own bumps; a correction cancels them so yours sound neutral, the way the game was mixed. Pick the one
         for the headphones you wear, once. The sound presets in the Mixer are your taste on top of that. Leave spatial sound off on these so
         it isn't applied twice.
@@ -537,7 +540,7 @@ export function Devices(p: {
           {p.outputs.map((o, i) => (
             <li
               key={o.id}
-              className={`row row-draggable${drag === i ? " is-dragging" : ""}${over === i && drag !== null && drag !== i ? (drag < i ? " is-over-below" : " is-over-above") : ""}${!p.autoSwitch && i > 0 ? " is-unused" : ""}`}
+              className={`row row-draggable${drag === i ? " is-dragging" : ""}${over === i && drag !== null && drag !== i ? (drag < i ? " is-over-below" : " is-over-above") : ""}${!p.autoSwitch && o.id !== (p.chosen && p.outputs.some((x) => x.id === p.chosen) ? p.chosen : p.outputs[0].id) ? " is-unused" : ""}`}
               draggable
               onDragStart={(e) => {
                 setDrag(i);
@@ -564,6 +567,18 @@ export function Devices(p: {
               <span className="row-order">{i + 1}</span>
               <span className="row-title">{p.devices.find((d) => d.id === o.id)?.name ?? (o.name || "Disconnected device")}</span>
               {o.id === p.activeId ? <span className="badge">Playing</span> : !p.devices.some((d) => d.id === o.id) && <span className="row-detail">Not connected</span>}
+              {o.id === p.chosen ? (
+                <button className="link" onClick={() => p.onChoose(null)} title="Go back to the order of this list">
+                  Chosen by you: undo
+                </button>
+              ) : (
+                o.id !== p.activeId &&
+                p.devices.some((d) => d.id === o.id) && (
+                  <button className="link" onClick={() => p.onChoose(o.id)} title="Play on this one now, whatever the order says">
+                    Play here
+                  </button>
+                )
+              )}
               <button className="link" onClick={() => setPicking(picking === o.id ? null : o.id)} title="Headphone correction">
                 {o.correction ? o.correction.name : "No correction"}
               </button>
