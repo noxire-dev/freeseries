@@ -22,12 +22,12 @@ use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, 
 use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 
 /// How cpal spells a device id, and what the app has stored: "wasapi:" then Windows' own id.
-const ID_PREFIX: &str = "wasapi:";
+pub(crate) const ID_PREFIX: &str = "wasapi:";
 const IEEE_FLOAT: GUID = GUID::from_u128(0x00000003_0000_0010_8000_00aa00389b71);
 const WAVE_FORMAT_EXTENSIBLE: u16 = 0xFFFE;
 const WAVE_FORMAT_IEEE_FLOAT: u16 = 3;
 /// 200 ms, in the 100 ns units WASAPI counts in.
-const CAPTURE_BUFFER_HNS: i64 = 2_000_000;
+pub(crate) const CAPTURE_BUFFER_HNS: i64 = 2_000_000;
 /// We keep two 10 ms periods in the device: a wake later than that found it empty.
 const LATE_WAKE_MS: f64 = 20.0;
 
@@ -48,13 +48,13 @@ impl Drop for Session {
     }
 }
 
-struct Format {
-    rate: u32,
-    channels: usize,
+pub(crate) struct Format {
+    pub(crate) rate: u32,
+    pub(crate) channels: usize,
 }
 
 /// The endpoint's mix format, if it is what shared mode gives everyone: float samples.
-unsafe fn format_of(client: &IAudioClient) -> Result<(Format, *mut WAVEFORMATEX), String> {
+pub(crate) unsafe fn format_of(client: &IAudioClient) -> Result<(Format, *mut WAVEFORMATEX), String> {
     let f = client.GetMixFormat().map_err(|e| e.to_string())?;
     let tag = (*f).wFormatTag;
     let float = tag == WAVE_FORMAT_IEEE_FLOAT || (tag == WAVE_FORMAT_EXTENSIBLE && std::ptr::read_unaligned(std::ptr::addr_of!((*(f as *const WAVEFORMATEXTENSIBLE)).SubFormat)) == IEEE_FLOAT);
@@ -64,14 +64,14 @@ unsafe fn format_of(client: &IAudioClient) -> Result<(Format, *mut WAVEFORMATEX)
     Ok((Format { rate: (*f).nSamplesPerSec, channels: (*f).nChannels as usize }, f))
 }
 
-fn enumerator() -> Result<IMMDeviceEnumerator, String> {
+pub(crate) fn enumerator() -> Result<IMMDeviceEnumerator, String> {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
         CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).map_err(|e| e.to_string())
     }
 }
 
-fn device(id: &str) -> Result<IMMDevice, String> {
+pub(crate) fn device(id: &str) -> Result<IMMDevice, String> {
     let raw = id.strip_prefix(ID_PREFIX).unwrap_or(id);
     let wide: Vec<u16> = raw.encode_utf16().chain([0]).collect();
     unsafe { enumerator()?.GetDevice(PCWSTR(wide.as_ptr())).map_err(|e| format!("device {raw}: {e}")) }

@@ -127,3 +127,24 @@ nothing. Noise floor between words: Arctis mic -66.6 -> -94.7 dBFS (nobody spoke
 own floor), Realtek array with room sound -49.4 -> -102.7 dBFS; voice level dropped 7-11 dB
 overall, which is the room between words going away. Whether a keyboard goes with it: listen to
 `target/mic-spike/*-denoised.wav` next to `*-raw.wav`. Step 2 waits on VB-CABLE.
+
+**Step 2, first run (2026-10-11, VB-CABLE installed, not yet rebooted; its endpoints were live anyway).**
+`src/mic.rs` is the mic session: one thread paced by the cable input's render event, draining
+the mic (or an output's loopback, for measuring), RNNoise per 480-sample frame, then the same
+`Feed` cushion as the output engine into the cable. `freeseries mics`, `freeseries mic <mic#|o<out#>> <cable#> [s] [raw]`.
+`examples/miclatency.rs` plays a 1 ms click into an output and listens on a capture endpoint, both
+on the performance counter (play time from `IAudioClock`, arrival from the capture packet's QPC).
+
+| Path | Median |
+|---|---|
+| CABLE Input -> CABLE Output, nothing of ours | **57 ms** |
+| monitor loopback -> mic session (raw) -> cable | 106 ms |
+| the same with RNNoise | 113 ms |
+
+The cable itself is 57 ms at its default `VBAudioCableWDM_Latency = 7168` (in
+`HKLM\SOFTWARE\VB-Audio\Cable`, read at driver start; the control panel changes it live). The
+manual's rule for 480-frame WASAPI clients gives 1536 minimum, 2048 safe: expect the cable to drop
+to ~15 ms. Our session adds ~49 ms (loopback capture, 12 ms cushion, two periods ahead, RNNoise's
+frame alignment, 7 ms measured). A real mic replaces the loopback with its USB delay.
+The cable's .cat is signed by Microsoft Windows Hardware Compatibility Publisher: loads under
+Secure Boot. `VBAudioCableWDM_SR` is already 48000.

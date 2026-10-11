@@ -58,6 +58,32 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         return Ok(());
     }
+    // `mics`: the microphones. `mic <mic#|o<out#>> <cable#> [seconds] [raw]`: run the mic path, RNNoise on unless `raw`;
+    // `o2` takes output 2's loopback as the mic, for measuring.
+    if args.first().map(String::as_str) == Some("mics") {
+        for (i, m) in freeseries::mic::mics()?.iter().enumerate() {
+            println!("{i}: {} ({} ch, {} Hz)", m.name, m.channels, m.sample_rate);
+        }
+        return Ok(());
+    }
+    if args.first().map(String::as_str) == Some("mic") && args.len() >= 3 {
+        let from = match args[1].strip_prefix('o') {
+            Some(n) => device_id(&devices, n)?,
+            None => freeseries::mic::mics()?.get(args[1].parse::<usize>()?).ok_or("no such mic")?.id.clone(),
+        };
+        let into = device_id(&devices, &args[2])?;
+        let settings = std::sync::Arc::new(freeseries::mic::Settings::default());
+        settings.suppress.store(!args.iter().any(|a| a == "raw"), std::sync::atomic::Ordering::Relaxed);
+        let session = freeseries::mic::start(&from, &into, settings.clone(), Box::new(|| log::error!("the mic path stopped")))?;
+        let seconds: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(30);
+        for _ in 0..seconds {
+            std::thread::sleep(Duration::from_secs(1));
+            let peak = settings.meter.take();
+            log::info!("mic peak {:.1} dBFS", 20.0 * peak.max(1e-6).log10());
+        }
+        drop(session);
+        return Ok(());
+    }
     if args.first().map(String::as_str) == Some("headset") {
         // Follows the headset for a while: switch it on and off, press mute, turn the dial.
         use freeseries::headset::{Headset, Usb};
