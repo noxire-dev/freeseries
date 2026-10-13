@@ -328,7 +328,7 @@ export function mockEngine(): EngineApi {
       { id: "wasapi:hdmi", name: "Odyssey G65B (NVIDIA High Definition Audio)", channels: 2, sampleRate: 48000, spatial: true },
       { id: "wasapi:rtk", name: "Speakers (Realtek(R) Audio)", channels: 2, sampleRate: 48000 },
       { id: "wasapi:arctis", name: "Headphones (Arctis Nova Pro Wireless)", channels: 2, sampleRate: 48000 },
-      ...(location.search.includes("nocable") ? [] : [{ id: "wasapi:cable", name: "CABLE Input (VB-Audio Virtual Cable)", channels: 2, sampleRate: 48000 }]),
+      ...(location.search.includes("nocable") ? [] : [{ id: "wasapi:cable", name: "FreeSeries Mic Feed - do not pick (VB-Audio Virtual Cable)", channels: 2, sampleRate: 48000 }]),
     ],
     snapshot: async () => state,
     setPlan: async (plan) => void (state = { ...state, status: plan?.outputs.length ? { state: "running", output: plan.outputs[0].id } : { state: "stopped" } }),
@@ -459,7 +459,7 @@ export function mockMic(): MicApi {
   let running = false;
   return {
     listMics: async () => [
-      { id: "mic:cable", name: "CABLE Output (VB-Audio Virtual Cable)", channels: 2, sampleRate: 48000 },
+      { id: "mic:cable", name: "FreeSeries Mic (VB-Audio Virtual Cable)", channels: 2, sampleRate: 48000 },
       { id: "mic:arctis", name: "Microphone (7- Arctis Nova Pro Wireless)", channels: 1, sampleRate: 48000 },
       { id: "mic:rtk", name: "Microphone Array (Realtek(R) Audio)", channels: 2, sampleRate: 48000 },
     ],

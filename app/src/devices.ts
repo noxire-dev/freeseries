@@ -7,8 +7,14 @@ const VIRTUAL = /fxsound/i;
 /** Something apps play into, not something you can listen on. */
 export const isVirtualDevice = (device: Device): boolean => VIRTUAL.test(device.name);
 
-/** VB-CABLE's inputs: where the cleaned-up mic goes (Mic page). Not an output to listen on, not a channel. */
-export const isCableInput = (device: Device): boolean => /^cable in/i.test(device.name);
+/** An end of VB-CABLE, the virtual microphone, under VB-Audio's name ("CABLE Input") or ours ("FreeSeries Mic"). */
+export const isCable = (device: Device): boolean => /vb-audio virtual cable/i.test(device.name);
+
+/** The end the cleaned-up mic goes into (Mic page). Not an output to listen on, not a channel. Its 16-channel twin is hidden by setup. */
+export const isCableInput = (device: Device): boolean => isCable(device) && !/16ch/i.test(device.name);
+
+/** Still under VB-Audio's names: setup hasn't named the cable yet. */
+export const isCableUnnamed = (device: Device): boolean => /^cable /i.test(device.name);
 
 // With more than one instance of the driver installed (channels), the main one is the endpoint
 // setup named plain "freeseries"; "freeseries Media" and the like are not what apps play into by default.

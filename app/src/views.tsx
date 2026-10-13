@@ -3,7 +3,7 @@ import type { About, HeadsetFeatures, HeadsetState, AppsApi, AudioApp, AutoEqApi
 import EqGraph, { bandColor } from "./EqGraph";
 import { DB_RANGE, F_MAX, F_MIN, clamp, combine, formatDb, formatPreset, frequencies, totalGainDb } from "./eqmath";
 import { BUILTIN } from "./builtin";
-import { isCableInput, isVirtualDevice, shortName } from "./devices";
+import { isCable, isCableInput, isVirtualDevice, shortName } from "./devices";
 import { FLAT } from "./store";
 import type { NamedPreset, SavedChannel, SavedMic, SavedOutput } from "./store";
 import type { ScreenMode, ScreenSettings } from "./screen";
@@ -1444,7 +1444,7 @@ export function Mic(p: {
   onRefresh(): void;
   onCableSite(): void;
 }) {
-  const mics = p.mics.filter((d) => !/^cable output/i.test(d.name)); // the cable's own output is what apps listen to, not a mic to clean
+  const mics = p.mics.filter((d) => !isCable(d)); // the cable's own output is what apps listen to, not a mic to clean
   const missing = p.mic.device !== null && !mics.some((d) => d.id === p.mic.device);
   const running = p.mic.on && p.status.running && !p.status.error;
   const [peak, setPeak] = useState(0);
@@ -1513,10 +1513,10 @@ export function Mic(p: {
       <p className="hint hint-below">
         {running ? (
           <>
-            Running. Pick <strong>CABLE Output (VB-Audio Virtual Cable)</strong> as the microphone in Discord and in your games: what they hear is the cleaned-up voice.
+            Running. Pick <strong>FreeSeries Mic</strong> as the microphone in Discord and in your games: what they hear is the cleaned-up voice. Never pick "FreeSeries Mic Feed".
           </>
         ) : (
-          "Switch the mic on, then pick CABLE Output as the microphone in Discord and in your games."
+          "Switch the mic on, then pick FreeSeries Mic as the microphone in Discord and in your games."
         )}
       </p>
       <p className="hint">The virtual microphone is VB-CABLE by VB-Audio Software, www.vb-cable.com. VB-CABLE is donationware; all participations are welcome.</p>

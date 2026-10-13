@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentApi, HeadsetApi, HeadsetFeatures, HeadsetState, AppsApi, AutoEqApi, Device, EngineApi, HotkeyApi, InfoApi, LogApi, LogEntry, MicApi, MicSnapshot, Preset, SetupApi, StartupApi, Status, WindowApi } from "./api";
-import { findVirtualDevice, isCableInput, shortName, virtualChannels } from "./devices";
+import { findVirtualDevice, isCableInput, isCableUnnamed, shortName, virtualChannels } from "./devices";
 import { BUILTIN } from "./builtin";
 import { createAgent } from "./agent";
 import { useScreen } from "./screen";
@@ -107,6 +107,14 @@ export default function App(p: {
 
   // The mic path follows its settings; the backend keeps it open and reopens it by itself.
   const cable = devices.find(isCableInput);
+  // A cable still under VB-Audio's names gets ours: "FreeSeries Mic" to pick, "FreeSeries Mic Feed - do not pick" the other end.
+  useEffect(() => {
+    if (!cable || !isCableUnnamed(cable)) return;
+    p.setup.nameDevice().then(() => {
+      engine.listOutputs().then(setDevices, () => {});
+      p.mic.listMics().then(setMics, () => {});
+    }, () => {});
+  }, [p.setup, p.mic, engine, cable?.name]);
   useEffect(() => {
     const route = mic.on && mic.device && cable ? { from: mic.device, into: cable.id } : null;
     p.mic.setMic(route).catch((e) => setMicStatus({ running: false, error: String(e) }));

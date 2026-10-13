@@ -191,3 +191,15 @@ and compile-checked, not yet run in the app. The browser preview shows the page 
 Adjacent: `devices.ts` no longer treats "CABLE Input" as a channel device (it was an alternative to
 fxvad once; now it is the mic's cable), and the Devices page hides the cable's inputs from the
 output list.
+
+## The cable's names (2026-10-13)
+
+VB-CABLE names its ends from the cable's point of view: "CABLE Input" is where sound goes in, "CABLE
+Output" is where it comes out, which reads backwards to everyone else. Setup renames them, the same
+property write it uses for the fxvad endpoints (no admin needed): "CABLE Output" becomes **FreeSeries
+Mic** (what to pick in Discord), "CABLE Input" becomes **FreeSeries Mic Feed - do not pick**. The
+unused "CABLE In 16ch" is disabled through `IPolicyConfig::SetEndpointVisibility` (undocumented, the
+same call every device-disabling tool makes; state 0x2 afterwards, back via the Sound control panel's
+"Show disabled devices"). The app runs the rename by itself when it sees a cable still under
+VB-Audio's names. The interface name "(VB-Audio Virtual Cable)" stays on both, and the app finds
+the cable by it.
