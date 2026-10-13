@@ -13,6 +13,9 @@ export interface SavedOutput {
   correction?: NamedPreset | null;
 }
 
+/** The microphone path: which mic, whether it runs, and whether its background noise is removed. */
+export interface SavedMic { device: string | null; on: boolean; suppress: boolean }
+
 /** A channel: its mixer settings and its sound, the curve the editor edits. Volume is the slider position, 0 to 1. */
 export interface SavedChannel { volume: number; muted: boolean; presetName: string; preset: Preset }
 
@@ -50,6 +53,7 @@ export interface Saved {
   /** Let an AI agent in through the local MCP endpoint. The token is made the first time this is switched on. */
   agent: boolean;
   agentToken: string;
+  mic: SavedMic;
 }
 
 export interface SettingsStore {
@@ -57,7 +61,7 @@ export interface SettingsStore {
   save(saved: Saved): void;
 }
 
-const EMPTY: Saved = { source: null, outputs: [], running: false, autoSwitch: true, chosen: null, hotkeys: true, channels: {}, balance: 0, bypass: false, library: [], assignments: {}, dial: true, display: true, screen: DEFAULT_SCREEN, headsetSettings: {}, agent: false, agentToken: "" };
+const EMPTY: Saved = { source: null, outputs: [], running: false, autoSwitch: true, chosen: null, hotkeys: true, channels: {}, balance: 0, bypass: false, library: [], assignments: {}, dial: true, display: true, screen: DEFAULT_SCREEN, headsetSettings: {}, agent: false, agentToken: "", mic: { device: null, on: false, suppress: true } };
 
 /** 0.1.x stored a single route with one global preset. */
 function fromRoute(raw: Record<string, any>): Record<string, any> {

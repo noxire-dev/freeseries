@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { About, HeadsetFeatures, HeadsetState, AppsApi, AudioApp, AutoEqApi, AutoEqEntry, Band, Device, InfoApi, Kind, LogEntry, Preset, SetupApi, StartupApi, Status } from "./api";
+import type { About, HeadsetFeatures, HeadsetState, AppsApi, AudioApp, AutoEqApi, AutoEqEntry, Band, Device, InfoApi, Kind, LogEntry, MicSnapshot, Preset, SetupApi, StartupApi, Status } from "./api";
 import EqGraph, { bandColor } from "./EqGraph";
 import { DB_RANGE, F_MAX, F_MIN, clamp, combine, formatDb, formatPreset, frequencies, totalGainDb } from "./eqmath";
 import { BUILTIN } from "./builtin";
-import { isVirtualDevice } from "./devices";
+import { isCableInput, isVirtualDevice, shortName } from "./devices";
 import { FLAT } from "./store";
-import type { NamedPreset, SavedChannel, SavedOutput } from "./store";
+import type { NamedPreset, SavedChannel, SavedMic, SavedOutput } from "./store";
 import type { ScreenMode, ScreenSettings } from "./screen";
 
 const KINDS: { kind: Kind; label: string }[] = [
@@ -463,7 +463,7 @@ export function Devices(p: {
   const chosen = new Set(p.outputs.map((o) => o.id));
   // Spatial sound on the FreeSeries device and on an output too: everything goes through it twice.
   const doubled = p.devices.find((d) => d.id === virtual)?.spatial ? p.devices.filter((d) => chosen.has(d.id) && d.spatial).map((d) => d.name.replace(/ \(.*\)$/, "")) : [];
-  const available = p.devices.filter((d) => d.id !== virtual && !chosen.has(d.id) && !isVirtualDevice(d));
+  const available = p.devices.filter((d) => d.id !== virtual && !chosen.has(d.id) && !isVirtualDevice(d) && !isCableInput(d));
   // Reordering: drag a row, or use its arrow buttons (keyboard and screen readers).
   const [drag, setDrag] = useState<number | null>(null);
   const [over, setOver] = useState<number | null>(null);
@@ -1428,6 +1428,98 @@ export function Plugins(p: {
           </p>
         </>
       )}
+    </div>
+  );
+}
+
+/** Where the voice goes: a real microphone, background noise removed, into VB-CABLE, which apps see as a microphone. */
+export function Mic(p: {
+  mics: Device[];
+  /** VB-CABLE's input, when the cable is installed. */
+  cable: Device | undefined;
+  mic: SavedMic;
+  status: MicSnapshot;
+  level(): Promise<number>;
+  onMic(mic: SavedMic): void;
+  onRefresh(): void;
+  onCableSite(): void;
+}) {
+  const mics = p.mics.filter((d) => !/^cable output/i.test(d.name)); // the cable's own output is what apps listen to, not a mic to clean
+  const missing = p.mic.device !== null && !mics.some((d) => d.id === p.mic.device);
+  const running = p.mic.on && p.status.running && !p.status.error;
+  const [peak, setPeak] = useState(0);
+  useEffect(() => {
+    if (!running) return void setPeak(0);
+    const poll = setInterval(() => p.level().then((v) => setPeak((held) => Math.max(v, held * 0.8)), () => {}), 50);
+    return () => clearInterval(poll);
+  }, [p.level, running]);
+  const db = Math.max(METER_FLOOR_DB, 20 * Math.log10(Math.max(peak, 1e-6)));
+
+  if (!p.cable) {
+    return (
+      <div className="page">
+        <h2>Virtual microphone</h2>
+        <p className="hint">
+          FreeSeries cleans up your microphone and hands the result to Discord and your games as a microphone of its own. That needs a virtual audio cable: VB-CABLE, by VB-Audio Software,
+          from www.vb-cable.com. VB-CABLE is donationware; all participations are welcome.
+        </p>
+        <div className="actions">
+          <button className="button button-primary" onClick={p.onCableSite}>
+            Get VB-CABLE
+          </button>
+          <button className="button" onClick={p.onRefresh}>
+            Check again
+          </button>
+        </div>
+        <p className="hint hint-below">Install it, restart Windows, then come back here.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="page">
+      <h2>Microphone</h2>
+      <ul className="group">
+        <li>
+          <label className="row">
+            <span className="row-title">Microphone</span>
+            <select value={p.mic.device ?? ""} onChange={(e) => p.onMic({ ...p.mic, device: e.target.value || null })}>
+              <option value="">Choose a microphone</option>
+              {mics.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {shortName(d.name)}
+                </option>
+              ))}
+              {missing && <option value={p.mic.device ?? ""}>Not plugged in</option>}
+            </select>
+          </label>
+        </li>
+        <li>
+          <label className="row">
+            <span className="row-title">Remove background noise</span>
+            <input type="checkbox" role="switch" className="switch" checked={p.mic.suppress} onChange={(e) => p.onMic({ ...p.mic, suppress: e.target.checked })} />
+          </label>
+        </li>
+        <li>
+          <label className="row">
+            <span className="row-title">Mic on</span>
+            <input type="checkbox" role="switch" className="switch" checked={p.mic.on} disabled={!p.mic.device} onChange={(e) => p.onMic({ ...p.mic, on: e.target.checked })} />
+          </label>
+        </li>
+      </ul>
+      {p.mic.on && p.status.error && <p className="notice">{p.status.error}</p>}
+      <span className="meter meter-wide" role="meter" aria-label="Mic level" aria-valuemin={METER_FLOOR_DB} aria-valuemax={0} aria-valuenow={Math.round(db)}>
+        <span className="meter-bar" style={{ clipPath: `inset(0 ${(db / METER_FLOOR_DB) * 100}% 0 0)` }} />
+      </span>
+      <p className="hint hint-below">
+        {running ? (
+          <>
+            Running. Pick <strong>CABLE Output (VB-Audio Virtual Cable)</strong> as the microphone in Discord and in your games: what they hear is the cleaned-up voice.
+          </>
+        ) : (
+          "Switch the mic on, then pick CABLE Output as the microphone in Discord and in your games."
+        )}
+      </p>
+      <p className="hint">The virtual microphone is VB-CABLE by VB-Audio Software, www.vb-cable.com. VB-CABLE is donationware; all participations are welcome.</p>
     </div>
   );
 }

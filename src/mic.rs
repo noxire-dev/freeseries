@@ -7,7 +7,7 @@
 
 use crate::engine::{DeviceInfo, PeakMeter};
 use crate::native::{device, enumerator, format_of, CAPTURE_BUFFER_HNS, ID_PREFIX};
-use crate::wasapi::{join_pro_audio, Feed, Tuning, CUSHION_MS};
+use crate::wasapi::{join_pro_audio, Feed, Tuning};
 use nnnoiseless::DenoiseState;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
@@ -134,7 +134,11 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
     join_pro_audio();
     let started = Instant::now();
     let ms = |n: usize| s.rate as usize * s.out_ch * n / 1000;
-    let tuning = Tuning { cushion: ms(CUSHION_MS), slack: ms(2), frame: s.out_ch, per_ms: ms(1) };
+    // No cushion in the queue: the device buffer is the cushion. It is kept two periods ahead, and
+    // only what the queue holds is written, so a wake without a packet leaves it one period low and
+    // the next wake, with two packets, fills it back up. Below two periods for a whole second means
+    // the mic's clock is slower than the cable's: the queue is then stretched over the difference.
+    let tuning = Tuning { cushion: 0, slack: ms(2), frame: s.out_ch, per_ms: ms(1) };
     let last_packet_ms = Arc::new(AtomicU64::new(0));
     let queue = Arc::new(Mutex::new(VecDeque::with_capacity(ms(200))));
     let mut feed = Feed::new(queue.clone(), last_packet_ms.clone());
@@ -142,6 +146,7 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
     let ahead = (2 * period) as u32;
     let window = ms(1000);
     let mut played = 0usize;
+    let mut primed = false; // the first write fills the device to two periods; until then nothing is written
     let mut pending: Vec<f32> = Vec::with_capacity(FRAME * 4); // mono, waiting for a whole RNNoise frame
     let mut denoiser = DenoiseState::new();
     let mut clean = [0f32; FRAME];
@@ -204,10 +209,16 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
             Ok(p) => p,
             Err(e) => break Err(format!("cable: {e}")),
         };
-        let space = (s.out_size - padding).min(ahead.saturating_sub(padding));
+        let ready = feed.ready(&tuning) as u32;
+        if !primed && ready < ahead {
+            continue;
+        }
+        primed = true;
+        let space = (s.out_size - padding).min(ahead.saturating_sub(padding)).min(ready);
         if space == 0 {
             continue;
         }
+        let short = ahead.saturating_sub(padding + space) as usize; // how far below two periods the device is left
         let buffer = match s.writer.GetBuffer(space) {
             Ok(b) => b,
             Err(e) => break Err(format!("cable: {e}")),
@@ -219,6 +230,10 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
         feed.mix_into(data, now_ms, second_over, &tuning);
         if second_over {
             played = 0;
+            if short * s.out_ch > tuning.slack {
+                log::info!("mic: the cable is {} ms short of two periods: stretching the mic over it", short * 1000 / s.rate as usize);
+                feed.hold_back(short);
+            }
         }
         if let Err(e) = s.writer.ReleaseBuffer(space, 0) {
             break Err(format!("cable: {e}"));

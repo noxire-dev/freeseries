@@ -152,6 +152,20 @@ export interface AutoEqApi {
   fetchPreset(entry: AutoEqEntry): Promise<string>;
 }
 
+export interface MicSnapshot { running: boolean; error: string | null }
+
+/** The microphone path: a real mic, background noise removed, played into VB-CABLE, which apps see as a microphone. */
+export interface MicApi {
+  listMics(): Promise<Device[]>;
+  /** `from` a microphone, `into` the cable's input. `null` stops. A path that dies is reopened by itself. */
+  setMic(route: { from: string; into: string } | null): Promise<void>;
+  setSuppress(on: boolean): Promise<void>;
+  snapshot(): Promise<MicSnapshot>;
+  /** Peak of the cleaned-up voice since the last call, linear: 1 is full scale. */
+  level(): Promise<number>;
+  openCableSite(): Promise<void>;
+}
+
 const AUTOEQ = "https://raw.githubusercontent.com/jaakkopasanen/AutoEq/master/results";
 
 export function githubAutoEq(): AutoEqApi {
@@ -314,6 +328,7 @@ export function mockEngine(): EngineApi {
       { id: "wasapi:hdmi", name: "Odyssey G65B (NVIDIA High Definition Audio)", channels: 2, sampleRate: 48000, spatial: true },
       { id: "wasapi:rtk", name: "Speakers (Realtek(R) Audio)", channels: 2, sampleRate: 48000 },
       { id: "wasapi:arctis", name: "Headphones (Arctis Nova Pro Wireless)", channels: 2, sampleRate: 48000 },
+      ...(location.search.includes("nocable") ? [] : [{ id: "wasapi:cable", name: "CABLE Input (VB-Audio Virtual Cable)", channels: 2, sampleRate: 48000 }]),
     ],
     snapshot: async () => state,
     setPlan: async (plan) => void (state = { ...state, status: plan?.outputs.length ? { state: "running", output: plan.outputs[0].id } : { state: "stopped" } }),
@@ -426,3 +441,32 @@ export const mockLog = (): LogApi => ({
 });
 
 export const mockWindow = (): WindowApi => ({ minimize() {}, toggleMaximize() {}, close() {} });
+
+export async function tauriMic(): Promise<MicApi> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return {
+    listMics: () => invoke("list_mics"),
+    setMic: (route) => invoke("set_mic", { from: route?.from ?? null, into: route?.into ?? null }),
+    setSuppress: (on) => invoke("set_mic_suppress", { on }),
+    snapshot: () => invoke("mic_snapshot"),
+    level: () => invoke("mic_level"),
+    openCableSite: () => invoke("open_cable_site"),
+  };
+}
+
+/** Browser preview: the mics of this PC and a voice that moves. `?nocable` previews a PC without VB-CABLE. */
+export function mockMic(): MicApi {
+  let running = false;
+  return {
+    listMics: async () => [
+      { id: "mic:cable", name: "CABLE Output (VB-Audio Virtual Cable)", channels: 2, sampleRate: 48000 },
+      { id: "mic:arctis", name: "Microphone (7- Arctis Nova Pro Wireless)", channels: 1, sampleRate: 48000 },
+      { id: "mic:rtk", name: "Microphone Array (Realtek(R) Audio)", channels: 2, sampleRate: 48000 },
+    ],
+    setMic: async (route) => void (running = route !== null),
+    setSuppress: async () => {},
+    snapshot: async () => ({ running, error: null }),
+    level: async () => (running ? 0.03 + 0.6 * Math.abs(Math.sin(performance.now() / 300)) * Math.abs(Math.sin(performance.now() / 1700)) : 0),
+    openCableSite: async () => void window.open("https://vb-audio.com/Cable/", "_blank"),
+  };
+}

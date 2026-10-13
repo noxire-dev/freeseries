@@ -1,21 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AgentApi, HeadsetApi, HeadsetFeatures, HeadsetState, AppsApi, AutoEqApi, Device, EngineApi, HotkeyApi, InfoApi, LogApi, LogEntry, Preset, SetupApi, StartupApi, Status, WindowApi } from "./api";
-import { findVirtualDevice, shortName, virtualChannels } from "./devices";
+import type { AgentApi, HeadsetApi, HeadsetFeatures, HeadsetState, AppsApi, AutoEqApi, Device, EngineApi, HotkeyApi, InfoApi, LogApi, LogEntry, MicApi, MicSnapshot, Preset, SetupApi, StartupApi, Status, WindowApi } from "./api";
+import { findVirtualDevice, isCableInput, shortName, virtualChannels } from "./devices";
 import { BUILTIN } from "./builtin";
 import { createAgent } from "./agent";
 import { useScreen } from "./screen";
 import type { AgentHost } from "./agent";
 import { DEFAULT_CHANNEL, FLAT } from "./store";
-import type { SavedOutput, SettingsStore } from "./store";
-import { Devices, Equalizer, Log, Mixer, Plugins, Presets, Settings, Setup } from "./views";
+import type { SavedMic, SavedOutput, SettingsStore } from "./store";
+import { Devices, Equalizer, Log, Mic, Mixer, Plugins, Presets, Settings, Setup } from "./views";
 
-type View = "equalizer" | "mixer" | "presets" | "devices" | "plugins" | "settings" | "log" | "setup";
+type View = "equalizer" | "mixer" | "presets" | "devices" | "mic" | "plugins" | "settings" | "log" | "setup";
 
 const NAV: { view: View; label: string; icon: string }[] = [
   { view: "equalizer", label: "Equalizer", icon: "M4 7h9m4 0h3M4 17h3m4 0h9M15 4.5v5M9 14.5v5" },
   { view: "mixer", label: "Mixer", icon: "M6 4v7m0 4v5M12 4v3m0 4v9M18 4v9m0 4v3M4 11h4M10 7h4M16 13h4" },
   { view: "presets", label: "Presets", icon: "M5 6h14M5 12h14M5 18h9" },
   { view: "devices", label: "Devices", icon: "M5 18v-5a7 7 0 0 1 14 0v5M5 14.5h2.5v5H5zM16.5 14.5H19v5h-2.5z" },
+  { view: "mic", label: "Mic", icon: "M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zM6 11a6 6 0 0 0 12 0M12 17v4M9 21h6" },
   { view: "plugins", label: "Plugins", icon: "M9 3h6v4a2 2 0 1 0 4 0h2v6h-2a2 2 0 1 0 0 4h2v4H3v-6h2a2 2 0 1 0 0-4H3V7h6z" },
   { view: "settings", label: "Settings", icon: "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z" },
 ];
@@ -38,6 +39,7 @@ export default function App(p: {
   apps: AppsApi;
   agent: AgentApi;
   headset: HeadsetApi;
+  mic: MicApi;
   autoEq: AutoEqApi;
   settings: SettingsStore;
   /** A development build sits next to the installed app, so it must not start playing by itself. */
@@ -52,6 +54,10 @@ export default function App(p: {
   const [running, setRunning] = useState(saved.running && p.autoStart);
   const [autoSwitch, setAutoSwitch] = useState(saved.autoSwitch);
   const [chosenOutput, setChosenOutput] = useState<string | null>(saved.chosen ?? null);
+  // A development build must not open a second mic path next to the installed app's.
+  const [mic, setMicSettings] = useState<SavedMic>({ ...saved.mic, on: saved.mic.on && p.autoStart });
+  const [micStatus, setMicStatus] = useState<MicSnapshot>({ running: false, error: null });
+  const [mics, setMics] = useState<Device[]>([]);
   const [hotkeysOn, setHotkeysOn] = useState(saved.hotkeys);
   const [mixer, setMixer] = useState(saved.channels);
   const [balance, setBalance] = useState(saved.balance);
@@ -95,9 +101,27 @@ export default function App(p: {
   }, [engine]);
 
   useEffect(
-    () => settings.save({ source, outputs, running, autoSwitch, chosen: chosenOutput, hotkeys: hotkeysOn, channels: mixer, balance, bypass, library, assignments, dial: dialOn, display: displayOn, screen, headsetSettings, agent: agentOn, agentToken }),
-    [source, outputs, running, autoSwitch, chosenOutput, hotkeysOn, mixer, balance, bypass, library, assignments, dialOn, displayOn, screen, headsetSettings, agentOn, agentToken],
+    () => settings.save({ source, outputs, running, autoSwitch, chosen: chosenOutput, hotkeys: hotkeysOn, channels: mixer, balance, bypass, library, assignments, dial: dialOn, display: displayOn, screen, headsetSettings, agent: agentOn, agentToken, mic }),
+    [source, outputs, running, autoSwitch, chosenOutput, hotkeysOn, mixer, balance, bypass, library, assignments, dialOn, displayOn, screen, headsetSettings, agentOn, agentToken, mic],
   );
+
+  // The mic path follows its settings; the backend keeps it open and reopens it by itself.
+  const cable = devices.find(isCableInput);
+  useEffect(() => {
+    const route = mic.on && mic.device && cable ? { from: mic.device, into: cable.id } : null;
+    p.mic.setMic(route).catch((e) => setMicStatus({ running: false, error: String(e) }));
+  }, [p.mic, mic.on, mic.device, cable?.id]);
+  useEffect(() => void p.mic.setSuppress(mic.suppress).catch(() => {}), [p.mic, mic.suppress]);
+  useEffect(() => {
+    if (!mic.on) return;
+    const check = () => p.mic.snapshot().then(setMicStatus, () => {});
+    check();
+    const poll = setInterval(check, 1000);
+    return () => clearInterval(poll);
+  }, [p.mic, mic.on]);
+  useEffect(() => {
+    if (view === "mic") p.mic.listMics().then(setMics, () => {});
+  }, [p.mic, view]);
   useEffect(() => void p.hotkeys.setEnabled(hotkeysOn).then(setRefused, () => {}), [p.hotkeys, hotkeysOn]);
 
   // The virtual device is found by name; `source` only matters when that fails and the user picked one.
@@ -521,6 +545,21 @@ export default function App(p: {
           />
         )}
         {view === "log" && <Log entries={entries} onOpenFolder={p.log.openFolder} onBack={() => setView("settings")} />}
+        {view === "mic" && (
+          <Mic
+            mics={mics}
+            cable={cable}
+            mic={mic}
+            status={micStatus}
+            level={p.mic.level}
+            onMic={setMicSettings}
+            onRefresh={() => {
+              engine.listOutputs().then(setDevices);
+              p.mic.listMics().then(setMics, () => {});
+            }}
+            onCableSite={p.mic.openCableSite}
+          />
+        )}
         {view === "devices" && (
           <Devices
             devices={devices}

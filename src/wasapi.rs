@@ -114,6 +114,26 @@ impl Feed {
         Feed { queue, last_packet_ms, talking_since_ms: None, least_left: usize::MAX, dry: 0, primed: false, ease: 0.0, pos: 0.0 }
     }
 
+    /// Frames the queue can serve right now without running short, even while reading faster.
+    /// The mic path writes only this much: a wake without a packet then leaves the device buffer
+    /// a period low instead of putting a gap into the voice.
+    pub(crate) fn ready(&self, t: &Tuning) -> usize {
+        let frames = self.queue.lock().unwrap().len() / t.frame;
+        let faster = self.ease.clamp(-self.rate(t), self.rate(t)).max(0.0); // reading slower never runs short
+        (frames.saturating_sub(1) as f64 / (1.0 + faster)) as usize
+    }
+
+    /// How much faster (or slower) than one frame per frame the reader moves while it eases.
+    fn rate(&self, t: &Tuning) -> f64 {
+        if self.ease.abs() > (EASE_FAST_ABOVE_MS * t.per_ms / t.frame) as f64 { EASE_FAST } else { EASE }
+    }
+
+    /// Read `frames` fewer over the coming second: the device buffer has run down (the source's
+    /// clock is slower than the output's) and this stretches the queue over the difference.
+    pub(crate) fn hold_back(&mut self, frames: usize) {
+        self.ease = -(frames as f64) - self.pos.fract();
+    }
+
     /// Adds this channel's share to `data`. `second_over`: the once-a-second look at the leftovers is due.
     ///
     /// Everything still in the queue after a callback has taken what it needs is pure delay. It
@@ -173,7 +193,7 @@ impl Feed {
                 let here = q[at * t.frame + c];
                 *s += if between > 0.0 { here + (q[(at + 1) * t.frame + c] - here) * between as f32 } else { here };
             }
-            let rate = if self.ease.abs() > (EASE_FAST_ABOVE_MS * t.per_ms / t.frame) as f64 { EASE_FAST } else { EASE };
+            let rate = self.rate(t);
             let faster = self.ease.clamp(-rate, rate); // negative is slower
             self.ease -= faster;
             self.pos += 1.0 + faster;

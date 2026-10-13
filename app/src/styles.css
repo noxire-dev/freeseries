@@ -1674,3 +1674,13 @@ select option {
     transition: none !important;
   }
 }
+
+/* The Mic page's level, lying down. */
+.meter-wide {
+  width: auto;
+  height: 8px;
+}
+
+.meter-wide .meter-bar {
+  background: linear-gradient(to right, var(--accent) 0 72%, #ffd60a 88%, #ff453a 100%);
+}

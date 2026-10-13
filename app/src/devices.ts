@@ -1,11 +1,14 @@
 import type { Device } from "./api";
 
 // freeseries only works through a virtual device apps can play into: the FxSound driver it
-// installs, or VB-Cable for people who already have that. Found by name so nobody has to pick it.
-const VIRTUAL = /fxsound|cable input/i;
+// installs. Found by name so nobody has to pick it.
+const VIRTUAL = /fxsound/i;
 
 /** Something apps play into, not something you can listen on. */
 export const isVirtualDevice = (device: Device): boolean => VIRTUAL.test(device.name);
+
+/** VB-CABLE's inputs: where the cleaned-up mic goes (Mic page). Not an output to listen on, not a channel. */
+export const isCableInput = (device: Device): boolean => /^cable in/i.test(device.name);
 
 // With more than one instance of the driver installed (channels), the main one is the endpoint
 // setup named plain "freeseries"; "freeseries Media" and the like are not what apps play into by default.

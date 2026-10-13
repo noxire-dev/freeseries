@@ -148,3 +148,46 @@ to ~15 ms. Our session adds ~49 ms (loopback capture, 12 ms cushion, two periods
 frame alignment, 7 ms measured). A real mic replaces the loopback with its USB delay.
 The cable's .cat is signed by Microsoft Windows Hardware Compatibility Publisher: loads under
 Secure Boot. `VBAudioCableWDM_SR` is already 48000.
+
+## Step 2 results (2026-10-13)
+
+The path runs end to end: `freeseries mic <mic#> <cable#>` (or `o<out#>` for an output's loopback
+as the source, which is how it is measured), RNNoise on unless `raw`, into CABLE Input; apps pick
+CABLE Output. `examples/miclatency.rs` plays a 1 ms click into an output once a second and listens
+on a capture endpoint, both on the performance counter.
+
+| Path | Median |
+|---|---|
+| Cable alone (click into CABLE Input, heard on CABLE Output) | 57.5 ms |
+| Loopback -> mic session, no RNNoise -> cable, first version | 106 ms |
+| Same with RNNoise | 113-119 ms |
+| Same after the trim below | 105.4 ms (20 clicks within 1.1 ms) |
+
+**The cable's 57 ms is the cable's default `Max Latency` of 7168 samples, and the registry key the
+manual names is not the one the driver reads.** `HKLM\SOFTWARE\VB-Audio\Cable\VBAudioCableWDM_Latency`
+is the control panel's copy; set to 2048 and rebooted, the delay did not move. The driver's own copy
+is `HKLM\SYSTEM\CurrentControlSet\Services\VB-Cable\VBAudioCableWDM_Latency` (still 7168 here),
+read at driver start. The control panel (`C:\Program Files\VB\CABLE\VBCABLE_ControlPanel.exe`,
+asks for admin) writes both and also has a live "Current Latency: 3x N smp" setting, default 7168.
+Strings in the binary: Max Latency 4096..32768 "requires REBOOT", Current Latency 3x128 .. 3x8192.
+Next: set the Services key to 2048 (admin), reboot, measure again; then try the live setting.
+
+**Our share, trimmed from ~62 ms to ~48.** The 12 ms queue cushion is gone: the cable's render
+buffer, kept two periods ahead, is the cushion. Only what the queue holds is written (`Feed::ready`),
+so a wake without a packet leaves the device one period low and the next wake, with two packets,
+fills it back; a device left short for a whole second (mic clock slower than the cable's) is refilled
+by stretching the queue (`Feed::hold_back`). The first write waits until two periods are queued, so
+the path starts in that state instead of one packet behind. What is left: two 10 ms periods in the
+cable's buffer, one packet of capture, the wake phase (0-10 ms), RNNoise's alignment (~7 ms).
+Smaller periods (`IAudioClient3`) are not offered by any driver here.
+
+**App side.** Tauri commands `list_mics`, `set_mic`, `set_mic_suppress`, `mic_snapshot`,
+`mic_level`, `open_cable_site`; a Mic page (mic picker, noise removal switch, on/off, level meter,
+VB-CABLE attribution and donationware notice per the licence). A dead session is reopened after two
+seconds; the dev build never opens the mic path (it would double the installed app's). Type-checked
+and compile-checked, not yet run in the app. The browser preview shows the page with `npm run dev`;
+`?nocable` previews a PC without the cable.
+
+Adjacent: `devices.ts` no longer treats "CABLE Input" as a channel device (it was an alternative to
+fxvad once; now it is the mic's cable), and the Devices page hides the cable's inputs from the
+output list.

@@ -285,6 +285,115 @@ fn open_log_folder(app: tauri::AppHandle) -> Result<(), String> {
     app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
 }
 
+/// The microphone path: the route the user set, the live session, and what went wrong last. A
+/// session that dies, or a mic that is not there yet, is tried again every two seconds.
+#[derive(Default)]
+struct Mic(std::sync::Arc<MicShared>);
+
+#[derive(Default)]
+struct MicShared {
+    settings: std::sync::Arc<freeseries::mic::Settings>,
+    /// Cleared by the session itself when it dies: that thread must not take the lock below, the
+    /// lock holder may be joining it.
+    alive: std::sync::atomic::AtomicBool,
+    state: std::sync::Mutex<MicState>,
+}
+
+#[derive(Default)]
+struct MicState {
+    /// (microphone, cable input), while the user has the mic switched on.
+    route: Option<(String, String)>,
+    session: Option<freeseries::mic::Session>,
+    error: Option<String>,
+    /// Bumped by every set_mic, so that a retry from before it gives up.
+    generation: u64,
+}
+
+#[derive(serde::Serialize)]
+struct MicSnapshot {
+    running: bool,
+    error: Option<String>,
+}
+
+const MIC_RETRY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Opens the mic path for the stored route, or closes it when there is none.
+fn mic_apply(mic: &std::sync::Arc<MicShared>, generation: u64) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let mut s = mic.state.lock().unwrap();
+    if s.generation != generation {
+        return;
+    }
+    s.session = None; // joins the old thread
+    let Some((from, into)) = s.route.clone() else {
+        s.error = None;
+        return;
+    };
+    let retry = {
+        let mic = mic.clone();
+        move || {
+            mic.alive.store(false, Relaxed);
+            let mic = mic.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(MIC_RETRY);
+                mic_apply(&mic, generation);
+            });
+        }
+    };
+    match freeseries::mic::start(&from, &into, mic.settings.clone(), Box::new(retry.clone())) {
+        Ok(session) => {
+            s.session = Some(session);
+            s.error = None;
+            mic.alive.store(true, Relaxed);
+        }
+        Err(e) => {
+            log::warn!("mic: {e}");
+            s.error = Some(e);
+            retry();
+        }
+    }
+}
+
+#[tauri::command]
+fn list_mics() -> Result<Vec<DeviceInfo>, String> {
+    freeseries::mic::mics()
+}
+
+/// `from` a microphone and `into` the cable's input start the mic path; either missing stops it.
+#[tauri::command(async)]
+fn set_mic(mic: State<Mic>, from: Option<String>, into: Option<String>) {
+    let generation = {
+        let mut s = mic.0.state.lock().unwrap();
+        s.route = from.zip(into);
+        s.generation += 1;
+        s.generation
+    };
+    mic_apply(&mic.0, generation);
+}
+
+#[tauri::command]
+fn set_mic_suppress(mic: State<Mic>, on: bool) {
+    mic.0.settings.suppress.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[tauri::command]
+fn mic_snapshot(mic: State<Mic>) -> MicSnapshot {
+    let s = mic.0.state.lock().unwrap();
+    MicSnapshot { running: s.session.is_some() && mic.0.alive.load(std::sync::atomic::Ordering::Relaxed), error: s.error.clone() }
+}
+
+/// Peak of the cleaned-up voice since the last call, linear, 1.0 = full scale.
+#[tauri::command]
+fn mic_level(mic: State<Mic>) -> f32 {
+    mic.0.settings.meter.take()
+}
+
+/// VB-CABLE's home: the virtual microphone comes from there.
+#[tauri::command]
+fn open_cable_site(app: tauri::AppHandle) -> Result<(), String> {
+    app.opener().open_url("https://vb-audio.com/Cable/", None::<&str>).map_err(|e| e.to_string())
+}
+
 /// Passed by the start-with-Windows entry so a boot launch stays in the tray.
 const MINIMIZED: &str = "--minimized";
 
@@ -475,6 +584,7 @@ pub fn run() {
         )
         .manage(App { engine: Engine::start(Native, headset.clone()), autostart: Box::new(TaskScheduler { task: "freeseries", args: MINIMIZED }), agent: Default::default() })
         .manage(headset)
+        .manage(Mic::default())
         .invoke_handler(tauri::generate_handler![
             list_outputs,
             snapshot,
@@ -506,7 +616,13 @@ pub fn run() {
             display_release,
             idle_seconds,
             set_dial,
-            agent_reply
+            agent_reply,
+            list_mics,
+            set_mic,
+            set_mic_suppress,
+            mic_snapshot,
+            mic_level,
+            open_cable_site
         ])
         .setup(move |app| {
             let _ = events.set(app.handle().clone());

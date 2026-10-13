@@ -157,3 +157,9 @@ Fixed in `Feed`:
 **The tone tool lies while the PC is in use.** `soak` measures everything on the output it listens to. Tonight the installed app was itself on the monitor, so every Media -> monitor run measured two engines' copies of the tone beating against each other (levels from -25 to -29 dBFS, hundreds of "dropouts"). And with music on the Media channel the tone dips in the music's rhythm with no engine in the path at all (`soak 1 1`). Before a run: read the installed app's last `engine Running` line and render the dev engine somewhere else; trust the engine's own log over the tone when the channel carries live audio. Clean runs tonight, Media -> Arctis endpoint: 30 s, 0 dropouts, 0 phase jumps.
 
 Not done: the installed app still runs the old build. `npm run upgrade` puts this in.
+
+## Microphone (2026-10-11 to 2026-10-13)
+
+Route A built: real mic -> RNNoise -> VB-CABLE's input; apps pick CABLE Output. CLI (`mics`, `mic`),
+`examples/miclatency.rs`, Tauri commands and a Mic page. Numbers, the cable's registry surprise and
+what is left to trim: `docs/mic.md`, "Step 2 results".
