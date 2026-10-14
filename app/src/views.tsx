@@ -1501,7 +1501,6 @@ export function Mic(p: {
             <span className="row-title">Remove background noise</span>
             <input
               type="range"
-              className="fader"
               min={0}
               max={1}
               step={0.05}
@@ -1540,7 +1539,7 @@ export function Mic(p: {
           "Switch the mic on, then pick FreeSeries Mic as the microphone in Discord and in your games."
         )}
       </p>
-      <h3>Mic EQ</h3>
+      <h2>Mic EQ</h2>
       <Equalizer preset={p.mic.eq} correction={undefined} bypass={false} morphKey="mic" spectrum={noSpectrum} onAnalysing={noop} onPreset={(eq) => p.onMic({ ...p.mic, eq })} />
       <p className="hint">The virtual microphone is VB-CABLE by VB-Audio Software, www.vb-cable.com. VB-CABLE is donationware; all participations are welcome.</p>
     </div>

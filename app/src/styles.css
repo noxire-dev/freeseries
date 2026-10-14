@@ -516,6 +516,7 @@ a,
 }
 
 .graph-empty {
+  position: relative; /* above the graph, which is positioned and shares the cell */
   place-self: center;
   display: grid;
   justify-items: center;
@@ -1677,10 +1678,33 @@ select option {
 
 /* The Mic page's level, lying down. */
 .meter-wide {
+  display: block; /* .meter is a span: on its own it needs a box */
   width: auto;
   height: 8px;
+  margin-top: 10px;
 }
 
 .meter-wide .meter-bar {
   background: linear-gradient(to right, var(--accent) 0 72%, #ffd60a 88%, #ff453a 100%);
+}
+
+/* A slider in a settings row (the mic's noise removal), with its value beside it. */
+.row input[type="range"] {
+  width: 160px;
+}
+
+.row output {
+  min-width: 3.5em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The equalizer inside a page (the mic EQ) has no window height to fill: give its graph one. */
+.page .eq {
+  padding: 0;
+}
+
+.page .eq-stage {
+  flex: none; /* flex: 1's 0% basis would win over the height */
+  height: 280px;
 }
