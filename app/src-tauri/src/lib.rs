@@ -383,6 +383,18 @@ fn set_mic_eq(mic: State<Mic>, preset: Preset) {
     mic.0.settings.eq.set(preset);
 }
 
+/// Turns the mic's analyser on while an agent listens.
+#[tauri::command]
+fn set_mic_analysing(mic: State<Mic>, on: bool) {
+    mic.0.settings.set_analysing(on);
+}
+
+/// dBFS per log-spaced band of the voice as it leaves, or null while the analyser is off.
+#[tauri::command]
+fn mic_spectrum(mic: State<Mic>, bands: usize) -> Option<Vec<f32>> {
+    mic.0.settings.spectrum(bands.clamp(8, 256))
+}
+
 #[tauri::command]
 fn mic_snapshot(mic: State<Mic>) -> MicSnapshot {
     let s = mic.0.state.lock().unwrap();
@@ -628,6 +640,8 @@ pub fn run() {
             set_mic,
             set_mic_strength,
             set_mic_eq,
+            set_mic_analysing,
+            mic_spectrum,
             mic_snapshot,
             mic_level,
             open_cable_site

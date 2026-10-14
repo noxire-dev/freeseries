@@ -25,6 +25,11 @@ export interface AgentHost {
   searchHeadphones(query: string): Promise<string[]>;
   /** Null removes the correction. False: no measurement by that name. */
   useCorrection(name: string | null): Promise<boolean>;
+  /** The microphone path. `cable`: VB-CABLE is installed, so there is one. */
+  mic(): Promise<{ cable: boolean; on: boolean; running: boolean; error: string | null; device: string | null; devices: string[]; strength: number; eq: Preset }>;
+  setMic(change: { strength?: number; eq?: Preset }): void;
+  /** dBFS per log-spaced band of the voice as it leaves (noise removed, EQ applied). Null while the mic is off. */
+  micSpectrum(bands: number): Promise<number[] | null>;
 }
 
 const VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"]; // keep in step with agent.rs
@@ -36,9 +41,23 @@ const LISTEN_BANDS = 30; // about third-octave
 
 const INSTRUCTIONS = `freeseries is a system-wide equalizer for Windows. Audio is split into channels (Game, and optionally Media and Chat); each channel has its own sound: a parametric EQ that runs after Windows spatial sound (Dolby Atmos, DTS). The output device carries a separate headphone correction (AutoEq measurements).
 You cannot hear. Ask what the person listens on and what bothers them, call get_state first, and use listen while their game or music is playing to see where the energy actually is. If they name their headphones and no correction is set, offer search_headphones and use_headphone_correction before shaping the sound: a sound curve on uncorrected headphones is guesswork.
-Tune with few, broad bands (Q 0.7 to 2) and changes of 1 to 4 dB; cut before you boost. Leave preamp_db out and FreeSeries keeps the loudest point at 0 dB so nothing clips. Every change is audible at once, so tell the person what you changed and ask what they hear. A curve the person tuned by hand and never saved is kept in the presets as "(before agent)" when you replace it.`;
+Tune with few, broad bands (Q 0.7 to 2) and changes of 1 to 4 dB; cut before you boost. Leave preamp_db out and FreeSeries keeps the loudest point at 0 dB so nothing clips. Every change is audible at once, so tell the person what you changed and ask what they hear. A curve the person tuned by hand and never saved is kept in the presets as "(before agent)" when you replace it.
+The microphone is separate: a real mic, RNNoise noise removal (strength 0 to 1), a mic EQ, then a virtual microphone ("FreeSeries Mic") that Discord and games record from. get_mic shows it; listen_mic measures the voice as it leaves, so ask the person to speak normally while you listen, and to stay silent for a second measurement if you want to see what noise removal leaves. For a voice, cut below 80 Hz, tame 200 to 400 Hz if it is boomy, and add 2 to 3 dB around 3 kHz for clarity; never boost above 8 kHz on a cheap mic, that is hiss.`;
 
 const channelArg = { type: "string", description: 'Channel key or label from get_state, e.g. "main" or "Game".' };
+const bandsArg = {
+  type: "array",
+  items: {
+    type: "object",
+    required: ["type", "fc", "gain_db"],
+    properties: {
+      type: { type: "string", enum: Object.keys(KINDS) },
+      fc: { type: "number", description: `Hz, ${F_MIN} to ${F_MAX}.` },
+      gain_db: { type: "number", description: `-${DB_RANGE} to ${DB_RANGE}.` },
+      q: { type: "number", description: "0.1 to 10. Default 1.41 for a peak, 0.71 for a shelf. A shelf above 0.71 overshoots: it grows a resonant bump next to fc." },
+    },
+  },
+};
 
 export const TOOLS = [
   {
@@ -64,19 +83,7 @@ export const TOOLS = [
         channel: channelArg,
         name: { type: "string", description: 'Shown in the UI, e.g. "Footsteps for Valorant". Default "Agent".' },
         preamp_db: { type: "number", description: "Leave out to have FreeSeries cancel the loudest boost, which is what you want unless you have a reason." },
-        bands: {
-          type: "array",
-          items: {
-            type: "object",
-            required: ["type", "fc", "gain_db"],
-            properties: {
-              type: { type: "string", enum: Object.keys(KINDS) },
-              fc: { type: "number", description: `Hz, ${F_MIN} to ${F_MAX}.` },
-              gain_db: { type: "number", description: `-${DB_RANGE} to ${DB_RANGE}.` },
-              q: { type: "number", description: "0.1 to 10. Default 1.41 for a peak, 0.71 for a shelf. A shelf above 0.71 overshoots: it grows a resonant bump next to fc." },
-            },
-          },
-        },
+        bands: bandsArg,
       },
     },
   },
@@ -104,9 +111,54 @@ export const TOOLS = [
     description: "Downloads and applies the AutoEq correction with exactly this name to the current output device. It assumes the headset's own EQ is off. Leave name out to remove the correction.",
     inputSchema: { type: "object", properties: { name: { type: "string" } } },
   },
+  {
+    name: "get_mic",
+    title: "Read the microphone setup",
+    description: "Whether the virtual microphone exists (VB-CABLE) and runs, which microphone feeds it, the noise removal strength and the mic EQ.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "listen_mic",
+    title: "Measure the voice",
+    description: `Averages the spectrum of the voice as it leaves (noise removed, EQ applied) for a few seconds: dBFS in ${LISTEN_BANDS} bands from 20 Hz to 20 kHz and the overall level. Ask the person to speak while you listen. Returns an error when the mic is off.`,
+    inputSchema: { type: "object", properties: { seconds: { type: "number", minimum: 1, maximum: 10, description: "How long to listen. Default 4." } } },
+  },
+  {
+    name: "set_mic",
+    title: "Set noise removal and the mic EQ",
+    description: `Changes the noise removal strength (0 none, 1 all RNNoise can) and/or replaces the mic EQ (at most ${MAX_BANDS} bands, clamped like set_eq; an empty list removes it). Applies at once. Leave out what should stay.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        strength: { type: "number", minimum: 0, maximum: 1 },
+        preamp_db: { type: "number", description: "Leave out to have FreeSeries cancel the loudest boost." },
+        bands: bandsArg,
+      },
+    },
+  },
 ];
 
 class ToolError extends Error {}
+
+const seconds = (args: Record<string, unknown>) => clamp(typeof args.seconds === "number" && Number.isFinite(args.seconds) ? args.seconds : 4, 1, 10);
+
+/** Power-averages a spectrum for `seconds`. Null: it never had anything. */
+async function average(spectrum: (bands: number) => Promise<number[] | null>, seconds: number) {
+  const power = new Array<number>(LISTEN_BANDS).fill(0);
+  let frames = 0;
+  const until = Date.now() + seconds * 1000;
+  while (Date.now() < until) {
+    const now = await spectrum(LISTEN_BANDS);
+    if (now) {
+      now.forEach((db, i) => (power[i] += 10 ** (db / 10)));
+      frames++;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  if (!frames) return null;
+  const db = (p: number) => tidy(round(10 * Math.log10(p / frames)));
+  return { bands: frequencies(LISTEN_BANDS).map((hz, i) => ({ hz: Math.round(hz), db: db(power[i]) })), levelDb: db(power.reduce((a, b) => a + b, 0)) };
+}
 
 const round = (v: number, step = 0.1) => Math.round(v / step) * step;
 const tidy = (v: number) => Number(v.toFixed(2));
@@ -171,20 +223,42 @@ async function call(host: AgentHost, name: string, args: Record<string, unknown>
       };
     case "listen": {
       if (!state.running) throw new ToolError("audio is stopped, there is nothing to measure");
-      const seconds = clamp(typeof args.seconds === "number" && Number.isFinite(args.seconds) ? args.seconds : 4, 1, 10);
-      const power = new Array<number>(LISTEN_BANDS).fill(0);
-      let frames = 0;
-      const until = Date.now() + seconds * 1000;
-      while (Date.now() < until) {
-        const now = await host.spectrum(LISTEN_BANDS);
-        if (now) {
-          now.forEach((db, i) => (power[i] += 10 ** (db / 10)));
-          frames++;
-        }
-        await new Promise((r) => setTimeout(r, 100));
+      const averaged = await average(host.spectrum, seconds(args));
+      if (!averaged) throw new ToolError("nothing is playing. Ask the person to start their game or music, then listen again.");
+      return { seconds: seconds(args), note: "dBFS of the whole mix after EQ. Shows the content, not the headphones.", bands: averaged.bands };
+    }
+    case "get_mic": {
+      const mic = await host.mic();
+      if (!mic.cable) return { virtual_microphone: "not available: VB-CABLE is not installed. The Mic page explains how to get it." };
+      return {
+        virtual_microphone: !mic.on ? "off: switch it on in the Mic page" : mic.error ? `failing: ${mic.error}` : mic.running ? "running: apps record from FreeSeries Mic" : "starting",
+        microphone: mic.device,
+        microphones: mic.devices,
+        noise_removal_strength: mic.strength,
+        eq: describe(mic.eq),
+        loudest_point_db: tidy(round(peakDb(mic.eq))),
+      };
+    }
+    case "listen_mic": {
+      const mic = await host.mic();
+      if (!mic.cable || !mic.on || !mic.running) throw new ToolError("the mic is off (see get_mic), there is nothing to measure");
+      const averaged = await average(host.micSpectrum, seconds(args));
+      if (!averaged) throw new ToolError("the mic went quiet or off while listening");
+      return { seconds: seconds(args), note: "dBFS of the voice as it leaves: noise removed, EQ applied.", level_db: averaged.levelDb, bands: averaged.bands };
+    }
+    case "set_mic": {
+      const mic = await host.mic();
+      if (!mic.cable) throw new ToolError("VB-CABLE is not installed, there is no mic path to set");
+      const change: { strength?: number; eq?: Preset } = {};
+      if (args.strength !== undefined) {
+        if (typeof args.strength !== "number" || !Number.isFinite(args.strength)) throw new ToolError("strength must be a number from 0 to 1");
+        change.strength = tidy(clamp(args.strength, 0, 1));
       }
-      if (!frames) throw new ToolError("nothing is playing. Ask the person to start their game or music, then listen again.");
-      return { seconds, note: "dBFS of the whole mix after EQ. Shows the content, not the headphones.", bands: frequencies(LISTEN_BANDS).map((hz, i) => ({ hz: Math.round(hz), db: tidy(round(10 * Math.log10(power[i] / frames))) })) };
+      if (args.bands !== undefined) change.eq = toPreset(args);
+      if (!Object.keys(change).length) throw new ToolError("nothing to change: give strength and/or bands");
+      host.setMic(change);
+      const eq = change.eq ?? mic.eq;
+      return { noise_removal_strength: change.strength ?? mic.strength, eq: describe(eq), loudest_point_db: tidy(round(peakDb(eq))) };
     }
     case "set_eq": {
       const preset = toPreset(args);

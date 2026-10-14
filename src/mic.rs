@@ -8,6 +8,7 @@
 use crate::engine::{DeviceInfo, PeakMeter, PresetCell};
 use crate::eq::{self, Eq};
 use crate::native::{device, enumerator, format_of, CAPTURE_BUFFER_HNS, ID_PREFIX};
+use crate::spectrum::Tap;
 use crate::wasapi::{join_pro_audio, Feed, Tuning};
 use nnnoiseless::DenoiseState;
 use std::collections::VecDeque;
@@ -37,11 +38,14 @@ pub struct Settings {
     strength: AtomicU32,
     pub eq: PresetCell,
     pub meter: PeakMeter,
+    /// The analyser (an agent's `listen_mic`) only costs anything while someone is looking.
+    analysing: AtomicBool,
+    tap: Mutex<Tap>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { strength: AtomicU32::new(1f32.to_bits()), eq: PresetCell::default(), meter: PeakMeter::default() }
+        Settings { strength: AtomicU32::new(1f32.to_bits()), eq: PresetCell::default(), meter: PeakMeter::default(), analysing: AtomicBool::new(false), tap: Mutex::new(Tap::default()) }
     }
 }
 
@@ -52,6 +56,24 @@ impl Settings {
 
     fn strength(&self) -> f32 {
         f32::from_bits(self.strength.load(Relaxed))
+    }
+
+    pub fn set_analysing(&self, on: bool) {
+        self.analysing.store(on, Relaxed);
+    }
+
+    /// dBFS per log-spaced band of the voice as it leaves (noise removed, EQ applied), or `None` while the analyser is off.
+    pub fn spectrum(&self, bands: usize) -> Option<Vec<f32>> {
+        self.analysing.load(Relaxed).then(|| self.tap.lock().unwrap().spectrum(bands))
+    }
+
+    /// For the mic thread. Never blocks: a frame that arrives while the UI reads is skipped.
+    fn tap(&self, mono: &[f32], rate: u32) {
+        if self.analysing.load(Relaxed) {
+            if let Ok(mut tap) = self.tap.try_lock() {
+                tap.push(mono, 1, rate as f32);
+            }
+        }
     }
 }
 
@@ -263,6 +285,7 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
             eq.process(&mut clean);
             eq::limit(&mut clean);
             settings.meter.feed(&clean);
+            settings.tap(&clean, s.rate);
             q.extend(clean.iter().flat_map(|&x| std::iter::repeat_n(x, s.out_ch)));
             if s.monitor.is_some() {
                 monitor_q.extend_from_slice(&clean);

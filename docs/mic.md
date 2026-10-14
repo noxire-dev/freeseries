@@ -223,3 +223,12 @@ lived. "Hear yourself" opens a second shared render stream on the output in use 
 voice to it three periods ahead; the two clocks are not matched (a drop every few minutes if the
 headphones run slow, a short gap if fast), and the delay is the whole mic path, about 100 ms.
 CLI: `mic <mic#> <cable#> [seconds] [raw] [m<out#>]`.
+
+## Agent tools (2026-10-14)
+
+The MCP endpoint (docs/roadmap.md, "Agent access") gained `get_mic`, `listen_mic` and `set_mic`.
+`listen_mic` is the output's `listen` pointed at the voice as it leaves (noise removed, EQ applied):
+a `spectrum::Tap` in `mic::Settings`, fed by the mic thread while an agent looks, read through
+`mic_spectrum`. It returns the 30-band average and the overall level, so an agent can compare a
+spoken passage with a silent one at different strengths. `set_mic` takes the strength and/or the
+EQ (same validation as `set_eq`). Checked by `node src/agent.check.ts` against a fake host.

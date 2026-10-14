@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentApi, HeadsetApi, HeadsetFeatures, HeadsetState, AppsApi, AutoEqApi, Device, EngineApi, HotkeyApi, InfoApi, LogApi, LogEntry, MicApi, MicSnapshot, Preset, SetupApi, StartupApi, Status, WindowApi } from "./api";
-import { findVirtualDevice, isCableInput, isCableUnnamed, shortName, virtualChannels } from "./devices";
+import { findVirtualDevice, isCable, isCableInput, isCableUnnamed, shortName, virtualChannels } from "./devices";
 import { BUILTIN } from "./builtin";
 import { createAgent } from "./agent";
 import { useScreen } from "./screen";
@@ -274,6 +274,7 @@ export default function App(p: {
   const viewRef = useRef(view);
   viewRef.current = view;
   const analyserOff = useRef(0);
+  const micAnalyserOff = useRef(0);
 
   const applyCorrection = (outputId: string, correction: SavedOutput["correction"]) => {
     setOutputs(outputs.map((o) => (o.id === outputId ? { ...o, correction } : o)));
@@ -336,6 +337,17 @@ export default function App(p: {
       const entry = (await p.autoEq.index()).find((e) => e.name === name);
       if (entry) applyCorrection(editing.id, { name: entry.name, preset: await engine.parsePreset(await p.autoEq.fetchPreset(entry)) });
       return !!entry;
+    },
+    mic: async () => {
+      const list = (await p.mic.listMics().catch(() => [])).filter((d) => !isCable(d));
+      return { cable: !!cable, on: mic.on, running: micStatus.running, error: micStatus.error, device: list.find((d) => d.id === mic.device)?.name ?? null, devices: list.map((d) => d.name), strength: mic.strength, eq: mic.eq };
+    },
+    setMic: (change) => setMicSettings((m) => ({ ...m, ...change })),
+    micSpectrum: async (bands) => {
+      p.mic.setAnalysing(true);
+      clearTimeout(micAnalyserOff.current);
+      micAnalyserOff.current = window.setTimeout(() => p.mic.setAnalysing(false), 1500);
+      return p.mic.spectrum(bands);
     },
   };
   useEffect(() => {

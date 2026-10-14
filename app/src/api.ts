@@ -162,6 +162,10 @@ export interface MicApi {
   /** How much background noise is removed: 0 none, 1 all RNNoise can. */
   setStrength(strength: number): Promise<void>;
   setEq(preset: Preset): Promise<void>;
+  /** The analyser behind `spectrum` only runs while on. */
+  setAnalysing(on: boolean): Promise<void>;
+  /** dBFS per log-spaced band (20 Hz to 20 kHz) of the voice as it leaves. Null while the analyser is off. */
+  spectrum(bands: number): Promise<number[] | null>;
   snapshot(): Promise<MicSnapshot>;
   /** Peak of the cleaned-up voice since the last call, linear: 1 is full scale. */
   level(): Promise<number>;
@@ -451,6 +455,8 @@ export async function tauriMic(): Promise<MicApi> {
     setMic: (route) => invoke("set_mic", { from: route?.from ?? null, into: route?.into ?? null, monitor: route?.monitor ?? null }),
     setStrength: (strength) => invoke("set_mic_strength", { strength }),
     setEq: (preset) => invoke("set_mic_eq", { preset }),
+    setAnalysing: (on) => invoke("set_mic_analysing", { on }),
+    spectrum: (bands) => invoke("mic_spectrum", { bands }),
     snapshot: () => invoke("mic_snapshot"),
     level: () => invoke("mic_level"),
     openCableSite: () => invoke("open_cable_site"),
@@ -469,6 +475,9 @@ export function mockMic(): MicApi {
     setMic: async (route) => void (running = route !== null),
     setStrength: async () => {},
     setEq: async () => {},
+    setAnalysing: async () => {},
+    // A voice: energy from 100 Hz to 4 kHz, a room below and hiss above.
+    spectrum: async (bands) => (running ? Array.from({ length: bands }, (_, i) => -70 + 30 * Math.exp(-(((i / bands) * 10 - 4) ** 2) / 4) + 6 * Math.sin(i * 1.3 + performance.now() / 150)) : null),
     snapshot: async () => ({ running, error: null }),
     level: async () => (running ? 0.03 + 0.6 * Math.abs(Math.sin(performance.now() / 300)) * Math.abs(Math.sin(performance.now() / 1700)) : 0),
     openCableSite: async () => void window.open("https://vb-audio.com/Cable/", "_blank"),
