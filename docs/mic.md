@@ -203,3 +203,12 @@ same call every device-disabling tool makes; state 0x2 afterwards, back via the 
 "Show disabled devices"). The app runs the rename by itself when it sees a cable still under
 VB-Audio's names. The interface name "(VB-Audio Virtual Cable)" stays on both, and the app finds
 the cable by it.
+
+## Latency key, measured (2026-10-14)
+
+Services key `VBAudioCableWDM_Latency` 7168 -> 2048, rebooted: cable alone 57.5 -> 53.0 ms (8 clicks,
+51.9-54.0, one 65.3); full path loopback -> RNNoise -> cable 105-110 ms. The key is the cable's
+ring size, not its delay: 5120 samples less bought 4.5 ms. What is left is mostly the two shared-mode
+engines on either side of the cable (render pre-roll, capture packet), which no cable setting moves.
+The control panel's live "Current Latency" (3x128 .. 3x8192 smp, admin) is the one knob not tried;
+expected gain a few ms. Device numbers after the 16ch endpoint was hidden: cable = output 5.
