@@ -231,4 +231,4 @@ The MCP endpoint (docs/roadmap.md, "Agent access") gained `get_mic`, `listen_mic
 a `spectrum::Tap` in `mic::Settings`, fed by the mic thread while an agent looks, read through
 `mic_spectrum`. It returns the 30-band average and the overall level, so an agent can compare a
 spoken passage with a silent one at different strengths. `set_mic` takes the strength and/or the
-EQ (same validation as `set_eq`). Checked by `node src/agent.check.ts` against a fake host.
+EQ (same validation as `set_eq`). Checked by `npm run check` against a fake host.

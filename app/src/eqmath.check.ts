@@ -40,10 +40,14 @@ if (migrate(current) !== current) throw new Error("current settings are left alo
 import { createAgent, toPreset } from "./agent.ts";
 import type { AgentHost } from "./agent.ts";
 const applied: { channel: string; name: string; preset: ReturnType<typeof toPreset> }[] = [];
+let mic = { strength: 1, eq: { preampDb: 0, bands: [] } as ReturnType<typeof toPreset> };
 const host = {
   state: () => ({ running: true, bypass: false, channels: [{ key: "main", label: "Game", presetName: "Flat", preset: { preampDb: 0, bands: [] }, volume: 1, muted: false }], output: null, presets: ["Footsteps"] }),
   setSound: (channel: string, name: string, preset: ReturnType<typeof toPreset>) => void applied.push({ channel, name, preset }),
   usePreset: () => false,
+  mic: async () => ({ cable: true, on: true, running: true, error: null, device: "Arctis", devices: ["Arctis"], ...mic }),
+  setMic: (change: Partial<typeof mic>) => void (mic = { ...mic, ...change }),
+  micSpectrum: async (bands: number) => Array.from({ length: bands }, (_, i) => (i === 10 || i === 11 ? -20 : -80)),
 } as unknown as AgentHost;
 const agent = createAgent(host, "0.0.0");
 const rpc = async (method: string, params?: unknown, notify = false) => JSON.parse((await agent(JSON.stringify({ jsonrpc: "2.0", ...(!notify && { id: 1 }), method, params }))) ?? "null");
@@ -52,7 +56,7 @@ const hello = await rpc("initialize", { protocolVersion: "2025-06-18", capabilit
 if (hello.result.protocolVersion !== "2025-06-18" || !hello.result.capabilities.tools) throw new Error(`initialize: ${JSON.stringify(hello)}`);
 if ((await rpc("initialize", { protocolVersion: "1999-01-01" })).result.protocolVersion !== "2025-11-25") throw new Error("an unknown version gets our latest");
 if ((await rpc("notifications/initialized", undefined, true)) !== null) throw new Error("notifications get no answer");
-if ((await rpc("tools/list")).result.tools.length !== 7) throw new Error("seven tools");
+if ((await rpc("tools/list")).result.tools.length !== 10) throw new Error("ten tools");
 if ((await rpc("nope")).error.code !== -32601) throw new Error("unknown method");
 if ((await rpc("tools/call", { name: "nope" })).error.code !== -32602) throw new Error("unknown tool");
 
@@ -71,3 +75,17 @@ if (applied.length !== 1) throw new Error("a refused set_eq changes nothing");
 const missing = await rpc("tools/call", { name: "use_preset", arguments: { channel: "main", name: "Nope" } });
 if (!missing.result.isError || !missing.result.content[0].text.includes("Footsteps")) throw new Error("a missing preset names the ones there are");
 if ((await agent("{")) === null || JSON.parse((await agent("{"))!).error.code !== -32700) throw new Error("parse error");
+
+// The mic tools: get_mic reads the host, set_mic applies the strength and a preamp-corrected EQ, listen_mic averages and sums.
+const tool = async (name: string, args: object) => {
+  const reply = (await rpc("tools/call", { name, arguments: args })).result;
+  return reply.isError ? { error: reply.content[0].text } : JSON.parse(reply.content[0].text);
+};
+if (!(await tool("get_mic", {})).virtual_microphone.startsWith("running")) throw new Error("get_mic reads the host");
+const micSet = await tool("set_mic", { strength: 0.6, bands: [{ type: "high_shelf", fc: 3000, gain_db: 3 }] });
+if (micSet.error || mic.strength !== 0.6 || mic.eq.bands.length !== 1 || mic.eq.preampDb >= 0) throw new Error(`set_mic: ${JSON.stringify(micSet)}`);
+if (!(await tool("set_mic", {})).error || !(await tool("set_mic", { strength: "loud" })).error) throw new Error("set_mic refuses nothing and nonsense");
+const heard = await tool("listen_mic", { seconds: 1 });
+if (heard.error || heard.bands.length !== 30 || heard.bands[10].db !== -20) throw new Error(`listen_mic: ${JSON.stringify(heard)}`);
+near(heard.level_db, -17, "two -20 dB bands make a -17 dB level");
+console.log("agent ok");

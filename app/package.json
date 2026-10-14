@@ -8,7 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "check": "node src/eqmath.check.ts && node src/agent.check.ts",
+    "check": "node src/eqmath.check.ts",
     "tauri:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "upgrade": "pwsh -NoProfile -File scripts/upgrade.ps1"
   },
