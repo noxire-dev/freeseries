@@ -115,11 +115,15 @@ export default function App(p: {
       p.mic.listMics().then(setMics, () => {});
     }, () => {});
   }, [p.setup, p.mic, engine, cable?.name]);
+  // "Hear yourself" plays on the output in use, or the first one when the engine is not running.
+  const listening = status.state === "running" ? status.output : (outputs.find((o) => o.id === chosenOutput) ?? outputs[0])?.id;
+  const monitor = mic.monitor ? listening ?? null : null;
   useEffect(() => {
-    const route = mic.on && mic.device && cable ? { from: mic.device, into: cable.id } : null;
+    const route = mic.on && mic.device && cable ? { from: mic.device, into: cable.id, monitor } : null;
     p.mic.setMic(route).catch((e) => setMicStatus({ running: false, error: String(e) }));
-  }, [p.mic, mic.on, mic.device, cable?.id]);
-  useEffect(() => void p.mic.setSuppress(mic.suppress).catch(() => {}), [p.mic, mic.suppress]);
+  }, [p.mic, mic.on, mic.device, cable?.id, monitor]);
+  useEffect(() => void p.mic.setStrength(mic.strength).catch(() => {}), [p.mic, mic.strength]);
+  useEffect(() => void p.mic.setEq(mic.eq).catch(() => {}), [p.mic, mic.eq]);
   useEffect(() => {
     if (!mic.on) return;
     const check = () => p.mic.snapshot().then(setMicStatus, () => {});

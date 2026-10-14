@@ -120,7 +120,8 @@ export function Equalizer(p: {
   spectrum(): Promise<number[] | null>;
   onAnalysing(on: boolean): void;
   onPreset(preset: Preset): void;
-  onBrowsePresets(): void;
+  /** Without it (the mic EQ) there is nothing to browse. */
+  onBrowsePresets?(): void;
 }) {
   const { preset, onPreset } = p;
   // The engine only taps the audio for the analyser while this page is up.
@@ -171,9 +172,11 @@ export function Equalizer(p: {
               <button className="button button-primary" onClick={() => add({ kind: "peak", fc: 1000, gainDb: 3, q: 1.41 })}>
                 Add a band
               </button>
-              <button className="button" onClick={p.onBrowsePresets}>
-                Find a preset for your headphones
-              </button>
+              {p.onBrowsePresets && (
+                <button className="button" onClick={p.onBrowsePresets}>
+                  Find a preset for your headphones
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -1496,7 +1499,18 @@ export function Mic(p: {
         <li>
           <label className="row">
             <span className="row-title">Remove background noise</span>
-            <input type="checkbox" role="switch" className="switch" checked={p.mic.suppress} onChange={(e) => p.onMic({ ...p.mic, suppress: e.target.checked })} />
+            <input
+              type="range"
+              className="fader"
+              min={0}
+              max={1}
+              step={0.05}
+              value={p.mic.strength}
+              onChange={(e) => p.onMic({ ...p.mic, strength: e.target.valueAsNumber })}
+              onDoubleClick={() => p.onMic({ ...p.mic, strength: 1 })}
+              title="Double-click for all of it"
+            />
+            <output>{p.mic.strength === 0 ? "Off" : `${Math.round(p.mic.strength * 100)}%`}</output>
           </label>
         </li>
         <li>
@@ -1505,7 +1519,14 @@ export function Mic(p: {
             <input type="checkbox" role="switch" className="switch" checked={p.mic.on} disabled={!p.mic.device} onChange={(e) => p.onMic({ ...p.mic, on: e.target.checked })} />
           </label>
         </li>
+        <li>
+          <label className="row">
+            <span className="row-title">Hear yourself</span>
+            <input type="checkbox" role="switch" className="switch" checked={p.mic.monitor} onChange={(e) => p.onMic({ ...p.mic, monitor: e.target.checked })} />
+          </label>
+        </li>
       </ul>
+      {p.mic.monitor && <p className="hint hint-below">Your voice plays on your headphones about a tenth of a second late: for checking the settings, not for talking.</p>}
       {p.mic.on && p.status.error && <p className="notice">{p.status.error}</p>}
       <span className="meter meter-wide" role="meter" aria-label="Mic level" aria-valuemin={METER_FLOOR_DB} aria-valuemax={0} aria-valuenow={Math.round(db)}>
         <span className="meter-bar" style={{ clipPath: `inset(0 ${(db / METER_FLOOR_DB) * 100}% 0 0)` }} />
@@ -1519,7 +1540,12 @@ export function Mic(p: {
           "Switch the mic on, then pick FreeSeries Mic as the microphone in Discord and in your games."
         )}
       </p>
+      <h3>Mic EQ</h3>
+      <Equalizer preset={p.mic.eq} correction={undefined} bypass={false} morphKey="mic" spectrum={noSpectrum} onAnalysing={noop} onPreset={(eq) => p.onMic({ ...p.mic, eq })} />
       <p className="hint">The virtual microphone is VB-CABLE by VB-Audio Software, www.vb-cable.com. VB-CABLE is donationware; all participations are welcome.</p>
     </div>
   );
 }
+
+const noop = () => {};
+const noSpectrum = async () => null;

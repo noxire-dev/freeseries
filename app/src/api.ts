@@ -157,9 +157,11 @@ export interface MicSnapshot { running: boolean; error: string | null }
 /** The microphone path: a real mic, background noise removed, played into VB-CABLE, which apps see as a microphone. */
 export interface MicApi {
   listMics(): Promise<Device[]>;
-  /** `from` a microphone, `into` the cable's input. `null` stops. A path that dies is reopened by itself. */
-  setMic(route: { from: string; into: string } | null): Promise<void>;
-  setSuppress(on: boolean): Promise<void>;
+  /** `from` a microphone, `into` the cable's input, `monitor` an output to hear yourself on. `null` stops. A path that dies is reopened by itself. */
+  setMic(route: { from: string; into: string; monitor: string | null } | null): Promise<void>;
+  /** How much background noise is removed: 0 none, 1 all RNNoise can. */
+  setStrength(strength: number): Promise<void>;
+  setEq(preset: Preset): Promise<void>;
   snapshot(): Promise<MicSnapshot>;
   /** Peak of the cleaned-up voice since the last call, linear: 1 is full scale. */
   level(): Promise<number>;
@@ -446,8 +448,9 @@ export async function tauriMic(): Promise<MicApi> {
   const { invoke } = await import("@tauri-apps/api/core");
   return {
     listMics: () => invoke("list_mics"),
-    setMic: (route) => invoke("set_mic", { from: route?.from ?? null, into: route?.into ?? null }),
-    setSuppress: (on) => invoke("set_mic_suppress", { on }),
+    setMic: (route) => invoke("set_mic", { from: route?.from ?? null, into: route?.into ?? null, monitor: route?.monitor ?? null }),
+    setStrength: (strength) => invoke("set_mic_strength", { strength }),
+    setEq: (preset) => invoke("set_mic_eq", { preset }),
     snapshot: () => invoke("mic_snapshot"),
     level: () => invoke("mic_level"),
     openCableSite: () => invoke("open_cable_site"),
@@ -464,7 +467,8 @@ export function mockMic(): MicApi {
       { id: "mic:rtk", name: "Microphone Array (Realtek(R) Audio)", channels: 2, sampleRate: 48000 },
     ],
     setMic: async (route) => void (running = route !== null),
-    setSuppress: async () => {},
+    setStrength: async () => {},
+    setEq: async () => {},
     snapshot: async () => ({ running, error: null }),
     level: async () => (running ? 0.03 + 0.6 * Math.abs(Math.sin(performance.now() / 300)) * Math.abs(Math.sin(performance.now() / 1700)) : 0),
     openCableSite: async () => void window.open("https://vb-audio.com/Cable/", "_blank"),

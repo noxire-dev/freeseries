@@ -14,7 +14,15 @@ export interface SavedOutput {
 }
 
 /** The microphone path: which mic, whether it runs, and whether its background noise is removed. */
-export interface SavedMic { device: string | null; on: boolean; suppress: boolean }
+export interface SavedMic {
+  device: string | null;
+  on: boolean;
+  /** How much background noise is removed, 0 to 1. */
+  strength: number;
+  eq: Preset;
+  /** Play the voice back on the output in use. */
+  monitor: boolean;
+}
 
 /** A channel: its mixer settings and its sound, the curve the editor edits. Volume is the slider position, 0 to 1. */
 export interface SavedChannel { volume: number; muted: boolean; presetName: string; preset: Preset }
@@ -61,7 +69,7 @@ export interface SettingsStore {
   save(saved: Saved): void;
 }
 
-const EMPTY: Saved = { source: null, outputs: [], running: false, autoSwitch: true, chosen: null, hotkeys: true, channels: {}, balance: 0, bypass: false, library: [], assignments: {}, dial: true, display: true, screen: DEFAULT_SCREEN, headsetSettings: {}, agent: false, agentToken: "", mic: { device: null, on: false, suppress: true } };
+const EMPTY: Saved = { source: null, outputs: [], running: false, autoSwitch: true, chosen: null, hotkeys: true, channels: {}, balance: 0, bypass: false, library: [], assignments: {}, dial: true, display: true, screen: DEFAULT_SCREEN, headsetSettings: {}, agent: false, agentToken: "", mic: { device: null, on: false, strength: 1, eq: FLAT, monitor: false } };
 
 /** 0.1.x stored a single route with one global preset. */
 function fromRoute(raw: Record<string, any>): Record<string, any> {
@@ -97,7 +105,11 @@ export function localSettings(key = "freeseries"): SettingsStore {
   return {
     load() {
       try {
-        return { ...EMPTY, ...migrate(JSON.parse(localStorage.getItem(key) ?? "{}")) };
+        const raw = migrate(JSON.parse(localStorage.getItem(key) ?? "{}"));
+        const mic = { ...EMPTY.mic, ...raw.mic };
+        const old = raw.mic as { suppress?: boolean } | undefined;
+        if (old && "suppress" in old) mic.strength = old.suppress ? 1 : 0; // 0.3.x had a switch
+        return { ...EMPTY, ...raw, mic };
       } catch {
         return EMPTY; // unreadable settings start fresh rather than block the app
       }

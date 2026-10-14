@@ -58,8 +58,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         return Ok(());
     }
-    // `mics`: the microphones. `mic <mic#|o<out#>> <cable#> [seconds] [raw]`: run the mic path, RNNoise on unless `raw`;
-    // `o2` takes output 2's loopback as the mic, for measuring.
+    // `mics`: the microphones. `mic <mic#|o<out#>> <cable#> [seconds] [raw] [m<out#>]`: run the mic path, RNNoise on
+    // unless `raw`, played back on output `m3`; `o2` takes output 2's loopback as the mic, for measuring.
     if args.first().map(String::as_str) == Some("mics") {
         for (i, m) in freeseries::mic::mics()?.iter().enumerate() {
             println!("{i}: {} ({} ch, {} Hz)", m.name, m.channels, m.sample_rate);
@@ -73,8 +73,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         };
         let into = device_id(&devices, &args[2])?;
         let settings = std::sync::Arc::new(freeseries::mic::Settings::default());
-        settings.suppress.store(!args.iter().any(|a| a == "raw"), std::sync::atomic::Ordering::Relaxed);
-        let session = freeseries::mic::start(&from, &into, settings.clone(), Box::new(|| log::error!("the mic path stopped")))?;
+        settings.set_strength(if args.iter().any(|a| a == "raw") { 0.0 } else { 1.0 });
+        let monitor = match args.iter().find_map(|a| a.strip_prefix('m').filter(|n| n.chars().all(|c| c.is_ascii_digit()))) {
+            Some(n) => Some(device_id(&devices, n)?),
+            None => None,
+        };
+        let session = freeseries::mic::start(&from, &into, monitor.as_deref(), settings.clone(), Box::new(|| log::error!("the mic path stopped")))?;
         let seconds: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(30);
         for _ in 0..seconds {
             std::thread::sleep(Duration::from_secs(1));

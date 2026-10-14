@@ -301,8 +301,8 @@ struct MicShared {
 
 #[derive(Default)]
 struct MicState {
-    /// (microphone, cable input), while the user has the mic switched on.
-    route: Option<(String, String)>,
+    /// (microphone, cable input, output to hear yourself on), while the user has the mic switched on.
+    route: Option<(String, String, Option<String>)>,
     session: Option<freeseries::mic::Session>,
     error: Option<String>,
     /// Bumped by every set_mic, so that a retry from before it gives up.
@@ -325,7 +325,7 @@ fn mic_apply(mic: &std::sync::Arc<MicShared>, generation: u64) {
         return;
     }
     s.session = None; // joins the old thread
-    let Some((from, into)) = s.route.clone() else {
+    let Some((from, into, monitor)) = s.route.clone() else {
         s.error = None;
         return;
     };
@@ -340,7 +340,7 @@ fn mic_apply(mic: &std::sync::Arc<MicShared>, generation: u64) {
             });
         }
     };
-    match freeseries::mic::start(&from, &into, mic.settings.clone(), Box::new(retry.clone())) {
+    match freeseries::mic::start(&from, &into, monitor.as_deref(), mic.settings.clone(), Box::new(retry.clone())) {
         Ok(session) => {
             s.session = Some(session);
             s.error = None;
@@ -360,20 +360,27 @@ fn list_mics() -> Result<Vec<DeviceInfo>, String> {
 }
 
 /// `from` a microphone and `into` the cable's input start the mic path; either missing stops it.
+/// `monitor` is an output to also play the voice on ("hear yourself").
 #[tauri::command(async)]
-fn set_mic(mic: State<Mic>, from: Option<String>, into: Option<String>) {
+fn set_mic(mic: State<Mic>, from: Option<String>, into: Option<String>, monitor: Option<String>) {
     let generation = {
         let mut s = mic.0.state.lock().unwrap();
-        s.route = from.zip(into);
+        s.route = from.zip(into).map(|(from, into)| (from, into, monitor));
         s.generation += 1;
         s.generation
     };
     mic_apply(&mic.0, generation);
 }
 
+/// How much background noise is removed: 0 none, 1 all RNNoise can.
 #[tauri::command]
-fn set_mic_suppress(mic: State<Mic>, on: bool) {
-    mic.0.settings.suppress.store(on, std::sync::atomic::Ordering::Relaxed);
+fn set_mic_strength(mic: State<Mic>, strength: f32) {
+    mic.0.settings.set_strength(strength);
+}
+
+#[tauri::command]
+fn set_mic_eq(mic: State<Mic>, preset: Preset) {
+    mic.0.settings.eq.set(preset);
 }
 
 #[tauri::command]
@@ -619,7 +626,8 @@ pub fn run() {
             agent_reply,
             list_mics,
             set_mic,
-            set_mic_suppress,
+            set_mic_strength,
+            set_mic_eq,
             mic_snapshot,
             mic_level,
             open_cable_site

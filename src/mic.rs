@@ -5,12 +5,13 @@
 
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use crate::engine::{DeviceInfo, PeakMeter};
+use crate::engine::{DeviceInfo, PeakMeter, PresetCell};
+use crate::eq::{self, Eq};
 use crate::native::{device, enumerator, format_of, CAPTURE_BUFFER_HNS, ID_PREFIX};
 use crate::wasapi::{join_pro_audio, Feed, Tuning};
 use nnnoiseless::DenoiseState;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use windows::core::{Interface, PCWSTR};
@@ -22,12 +23,36 @@ use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 
 const FRAME: usize = DenoiseState::FRAME_SIZE; // 480 samples, 10 ms at 48 kHz
 const RNNOISE_RATE: u32 = 48000;
+/// Samples RNNoise's output lags its input: one frame, its overlap-add window (see the test).
+const RNNOISE_DELAY: usize = 480;
+/// "Hear yourself" plays the cleaned-up voice on the user's own output. Its buffer is kept this
+/// far ahead (three 10 ms periods); more than this much voice waiting for it is dropped.
+const MONITOR_BUFFER_HNS: i64 = 1_000_000;
+const MONITOR_AHEAD: u32 = 3 * 480;
+const MONITOR_DROP: usize = 5 * 480;
 
 /// What the UI changes while the mic runs.
-#[derive(Default)]
 pub struct Settings {
-    pub suppress: AtomicBool,
+    /// How much of RNNoise's cleaned-up voice is used, 0 (the raw mic) to 1 (all of it), as f32 bits.
+    strength: AtomicU32,
+    pub eq: PresetCell,
     pub meter: PeakMeter,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings { strength: AtomicU32::new(1f32.to_bits()), eq: PresetCell::default(), meter: PeakMeter::default() }
+    }
+}
+
+impl Settings {
+    pub fn set_strength(&self, strength: f32) {
+        self.strength.store(strength.clamp(0.0, 1.0).to_bits(), Relaxed);
+    }
+
+    fn strength(&self) -> f32 {
+        f32::from_bits(self.strength.load(Relaxed))
+    }
 }
 
 /// The mic stream ends when this is dropped.
@@ -63,10 +88,11 @@ pub fn mics() -> Result<Vec<DeviceInfo>, String> {
 }
 
 /// Starts the mic: `from` is a microphone (or an output, whose loopback then stands in for one:
-/// that is how the delay is measured), `into` the cable's input. `on_lost` is called if the
-/// stream dies, the way the output engine does it.
-pub fn start(from: &str, into: &str, settings: Arc<Settings>, on_lost: Box<dyn Fn() + Send + Sync>) -> Result<Session, String> {
-    let (from, into) = (from.to_string(), into.to_string());
+/// that is how the delay is measured), `into` the cable's input, `monitor` an output to also play
+/// the voice on, so the user hears what the settings do. `on_lost` is called if the stream dies,
+/// the way the output engine does it.
+pub fn start(from: &str, into: &str, monitor: Option<&str>, settings: Arc<Settings>, on_lost: Box<dyn Fn() + Send + Sync>) -> Result<Session, String> {
+    let (from, into, monitor) = (from.to_string(), into.to_string(), monitor.map(str::to_string));
     let stop = Arc::new(AtomicBool::new(false));
     let stopping = stop.clone();
     let (ready_tx, ready_rx) = std::sync::mpsc::channel();
@@ -74,7 +100,7 @@ pub fn start(from: &str, into: &str, settings: Arc<Settings>, on_lost: Box<dyn F
         .name("mic".into())
         .spawn(move || {
             let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
-            match unsafe { open(&from, &into) } {
+            match unsafe { open(&from, &into, monitor.as_deref()) } {
                 Ok(running) => {
                     let _ = ready_tx.send(Ok(()));
                     if let Err(e) = unsafe { run(running, &settings, &stopping) } {
@@ -102,9 +128,18 @@ struct Running {
     out_size: u32,
     out_ch: usize,
     rate: u32,
+    monitor: Option<Monitor>,
 }
 
-unsafe fn open(from: &str, into: &str) -> Result<Running, String> {
+/// The user's own output, playing the voice back ("hear yourself").
+struct Monitor {
+    client: IAudioClient,
+    writer: IAudioRenderClient,
+    ch: usize,
+    size: u32,
+}
+
+unsafe fn open(from: &str, into: &str, monitor: Option<&str>) -> Result<Running, String> {
     let source = device(from)?;
     let capture: IAudioClient = source.Activate(CLSCTX_ALL, None).map_err(|e| e.to_string())?;
     let (input, in_format) = format_of(&capture)?;
@@ -124,10 +159,31 @@ unsafe fn open(from: &str, into: &str) -> Result<Running, String> {
     render.SetEventHandle(event).map_err(|e| e.to_string())?;
     let writer: IAudioRenderClient = render.GetService().map_err(|e| e.to_string())?;
     let out_size = render.GetBufferSize().map_err(|e| e.to_string())?;
+    // No monitor is not an error: the voice still reaches the cable.
+    let monitor = monitor.and_then(|id| match open_monitor(id) {
+        Ok(m) => Some(m),
+        Err(e) => {
+            log::warn!("mic: not playing the voice back: {e}");
+            None
+        }
+    });
     capture.Start().map_err(|e| e.to_string())?;
     render.Start().map_err(|e| e.to_string())?;
-    log::info!("mic: {} ch at {} Hz -> cable {} ch, {} ms of mic room", input.channels, input.rate, output.channels, capture.GetBufferSize().map_or(0, |f| f * 1000 / input.rate));
-    Ok(Running { capture, reader, in_ch: input.channels, render, writer, event, out_size, out_ch: output.channels, rate: output.rate })
+    log::info!("mic: {} ch at {} Hz -> cable {} ch, {} ms of mic room{}", input.channels, input.rate, output.channels, capture.GetBufferSize().map_or(0, |f| f * 1000 / input.rate), if monitor.is_some() { ", played back" } else { "" });
+    Ok(Running { capture, reader, in_ch: input.channels, render, writer, event, out_size, out_ch: output.channels, rate: output.rate, monitor })
+}
+
+unsafe fn open_monitor(id: &str) -> Result<Monitor, String> {
+    let client: IAudioClient = device(id)?.Activate(CLSCTX_ALL, None).map_err(|e| e.to_string())?;
+    let (info, format) = format_of(&client)?;
+    if info.rate != RNNOISE_RATE {
+        return Err(format!("the output runs at {} Hz, not {RNNOISE_RATE}", info.rate));
+    }
+    client.Initialize(AUDCLNT_SHAREMODE_SHARED, 0, MONITOR_BUFFER_HNS, 0, format, None).map_err(|e| e.to_string())?;
+    let writer: IAudioRenderClient = client.GetService().map_err(|e| e.to_string())?;
+    let size = client.GetBufferSize().map_err(|e| e.to_string())?;
+    client.Start().map_err(|e| e.to_string())?;
+    Ok(Monitor { client, writer, ch: info.channels, size })
 }
 
 unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), String> {
@@ -151,6 +207,9 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
     let mut denoiser = DenoiseState::new();
     let mut clean = [0f32; FRAME];
     let mut scaled = [0f32; FRAME];
+    let mut dry: VecDeque<f32> = std::iter::repeat_n(0.0, RNNOISE_DELAY).collect(); // the raw voice, lined up with RNNoise's output
+    let mut eq = Eq::new(&settings.eq.get(), s.rate as f64, 1);
+    let mut monitor_q: Vec<f32> = Vec::new(); // mono, waiting for the monitor
     let result = loop {
         if stop.load(Relaxed) {
             break Ok(());
@@ -179,24 +238,35 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
                 break;
             }
         }
-        // Whole frames through RNNoise (it counts in 16-bit units), then out to every cable channel.
+        // Whole frames through RNNoise (it counts in 16-bit units), the strength's share of the raw
+        // voice added back (delayed to line up), the mic EQ, then out to every cable channel.
+        let strength = settings.strength();
+        if let Some(preset) = settings.eq.take_changed() {
+            eq.retune(&preset);
+        }
         let mut q = queue.lock().unwrap();
         let mut taken = 0;
         for frame in pending.chunks_exact(FRAME) {
-            let out: &[f32] = if settings.suppress.load(Relaxed) {
+            if strength > 0.0 {
                 for (s, x) in scaled.iter_mut().zip(frame) {
                     *s = x * 32767.0;
                 }
                 denoiser.process_frame(&mut clean, &scaled);
-                for c in clean.iter_mut() {
-                    *c /= 32767.0;
+                for (c, &x) in clean.iter_mut().zip(frame) {
+                    dry.push_back(x);
+                    let raw = dry.pop_front().unwrap_or(0.0);
+                    *c = raw + strength * (*c / 32767.0 - raw);
                 }
-                &clean
             } else {
-                frame
-            };
-            settings.meter.feed(out);
-            q.extend(out.iter().flat_map(|&x| std::iter::repeat_n(x, s.out_ch)));
+                clean.copy_from_slice(frame);
+            }
+            eq.process(&mut clean);
+            eq::limit(&mut clean);
+            settings.meter.feed(&clean);
+            q.extend(clean.iter().flat_map(|&x| std::iter::repeat_n(x, s.out_ch)));
+            if s.monitor.is_some() {
+                monitor_q.extend_from_slice(&clean);
+            }
             taken += FRAME;
         }
         if taken > 0 {
@@ -238,9 +308,71 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
         if let Err(e) = s.writer.ReleaseBuffer(space, 0) {
             break Err(format!("cable: {e}"));
         }
+        if let Some(m) = &s.monitor {
+            play_back(m, &mut monitor_q);
+        }
     };
+    if let Some(m) = &s.monitor {
+        let _ = m.client.Stop();
+    }
     let _ = s.render.Stop();
     let _ = s.capture.Stop();
     let _ = CloseHandle(s.event);
     result
+}
+
+/// Writes what the monitor has room for, keeping its buffer MONITOR_AHEAD at most. The monitor runs
+/// on its own clock: when it is slower, voice piles up and is dropped (ponytail: a drop every few
+/// minutes instead of a resampler); when faster, a wake without voice leaves a short gap.
+unsafe fn play_back(m: &Monitor, voice: &mut Vec<f32>) {
+    let Ok(padding) = m.client.GetCurrentPadding() else { return };
+    let n = ((m.size - padding).min(MONITOR_AHEAD.saturating_sub(padding)) as usize).min(voice.len());
+    if n > 0 {
+        if let Ok(buffer) = m.writer.GetBuffer(n as u32) {
+            let data = std::slice::from_raw_parts_mut(buffer as *mut f32, n * m.ch);
+            for (frame, &x) in data.chunks_exact_mut(m.ch).zip(voice.iter()) {
+                frame.fill(x);
+            }
+            let _ = m.writer.ReleaseBuffer(n as u32, 0);
+        }
+        voice.drain(..n);
+    }
+    if voice.len() > MONITOR_DROP {
+        voice.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// RNNoise's output lags its input by a fixed number of samples. The strength mix adds the dry
+    /// voice back in, delayed by exactly that, or it would comb-filter against the cleaned one.
+    #[test]
+    fn rnnoise_delay() {
+        let mut denoiser = DenoiseState::new();
+        let n = FRAME * 60;
+        // A voiced sound: 210 Hz and its harmonics, on for 100 ms, off for 100 ms.
+        let input: Vec<f32> = (0..n)
+            .map(|i| {
+                let t = i as f32 / RNNOISE_RATE as f32;
+                let on = (i / (FRAME * 10)) % 2 == 1;
+                if !on { return 0.0; }
+                (1..6).map(|h| (2.0 * std::f32::consts::PI * 210.0 * h as f32 * t).sin() / h as f32).sum::<f32>() * 8000.0
+            })
+            .collect();
+        let mut output = vec![0f32; n];
+        for (i, frame) in input.chunks_exact(FRAME).enumerate() {
+            denoiser.process_frame(&mut output[i * FRAME..(i + 1) * FRAME], frame);
+        }
+        // Best lag by cross-correlation over the second half, once the network has settled.
+        let from = n / 2;
+        let best = (0..2 * FRAME)
+            .map(|lag| (lag, (from..n).map(|i| output[i] * input[i - lag]).sum::<f32>()))
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .unwrap();
+        // The band gains and the pitch filter pull the peak a couple of samples off the structural delay.
+        println!("rnnoise delay: {} samples (correlation {:.3e})", best.0, best.1);
+        assert!((best.0 as i64 - RNNOISE_DELAY as i64).abs() <= 4, "lag {} is not near {RNNOISE_DELAY}", best.0);
+    }
 }

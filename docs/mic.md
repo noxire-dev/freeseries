@@ -212,3 +212,14 @@ ring size, not its delay: 5120 samples less bought 4.5 ms. What is left is mostl
 engines on either side of the cable (render pre-roll, capture packet), which no cable setting moves.
 The control panel's live "Current Latency" (3x128 .. 3x8192 smp, admin) is the one knob not tried;
 expected gain a few ms. Device numbers after the 16ch endpoint was hidden: cable = output 5.
+
+## Strength, EQ, hear yourself (2026-10-14)
+
+Noise removal is a slider: the raw voice, delayed by RNNoise's 480-sample lag (`rnnoise_delay`
+test: the correlation peak lands within 4 samples of it, the band gains and pitch filter pull it),
+is mixed back in by `1 - strength`, so a half setting is not a comb filter. A mic EQ (`eq::Eq`, mono,
+`PresetCell` retuned live, `eq::limit` after it) runs after the denoiser, where the training data
+lived. "Hear yourself" opens a second shared render stream on the output in use and writes the
+voice to it three periods ahead; the two clocks are not matched (a drop every few minutes if the
+headphones run slow, a short gap if fast), and the delay is the whole mic path, about 100 ms.
+CLI: `mic <mic#> <cable#> [seconds] [raw] [m<out#>]`.
