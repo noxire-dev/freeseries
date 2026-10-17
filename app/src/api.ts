@@ -1,3 +1,5 @@
+import type { TrayItem } from "./tray";
+export type { TrayItem } from "./tray";
 // Everything the UI needs from outside the webview goes through these interfaces. The Tauri
 // implementations are built in main.tsx; a browser preview (plain `npm run dev`) gets the mocks.
 
@@ -112,6 +114,14 @@ export interface HotkeyApi {
   setEnabled(enabled: boolean): Promise<string[]>;
   /** Calls `onAction` when a shortcut is pressed, in any app. Resolves to the unsubscribe function. */
   subscribe(onAction: (action: HotkeyAction) => void): Promise<() => void>;
+}
+
+/** The tray icon's right-click menu. The UI owns it: see `tray.ts` for what goes in. */
+export interface TrayApi {
+  /** Replaces the items between Open and Quit. */
+  setMenu(items: TrayItem[]): Promise<void>;
+  /** Calls `onPick` with the id of the item clicked. Resolves to the unsubscribe function. */
+  subscribe(onPick: (id: string) => void): Promise<() => void>;
 }
 
 /** An app with an audio session. `device` is where it is pinned; null means it follows the Windows default. */
@@ -423,6 +433,17 @@ export const mockAgent = (): AgentApi => ({
 });
 
 export const mockHotkeys = (): HotkeyApi => ({ setEnabled: async () => [], subscribe: async () => () => {} });
+
+export async function tauriTray(): Promise<TrayApi> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  const { listen } = await import("@tauri-apps/api/event");
+  return {
+    setMenu: (items) => invoke("set_tray_menu", { items }),
+    subscribe: (onPick) => listen<string>("tray", (e) => onPick(e.payload)),
+  };
+}
+
+export const mockTray = (): TrayApi => ({ setMenu: async () => {}, subscribe: async () => () => {} });
 
 export function mockApps(): AppsApi {
   const apps: AudioApp[] = [

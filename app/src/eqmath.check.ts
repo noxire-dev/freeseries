@@ -1,6 +1,7 @@
 // Runnable check that the drawn curve matches the engine's filters: `npm run check`.
 import { bandGainDb, combine, formatPreset, totalGainDb } from "./eqmath.ts";
 import { migrate } from "./store.ts";
+import { trayMenu, trayPick } from "./tray.ts";
 
 const near = (actual: number, expected: number, what: string) => {
   if (Math.abs(actual - expected) >= 0.1) throw new Error(`${what}: got ${actual.toFixed(2)}, expected ${expected}`);
@@ -89,3 +90,14 @@ const heard = await tool("listen_mic", { seconds: 1 });
 if (heard.error || heard.bands.length !== 30 || heard.bands[10].db !== -20) throw new Error(`listen_mic: ${JSON.stringify(heard)}`);
 near(heard.level_db, -17, "two -20 dB bands make a -17 dB level");
 console.log("agent ok");
+
+// The tray menu: the output in use is ticked, an edited preset still ticks the one it came from,
+// no mic item without a cable, and a device id with colons in it survives the round trip.
+const tray = trayMenu({ outputs: [{ id: "wasapi:{a}", name: "Arctis" }, { id: "wasapi:{b}", name: "Odyssey" }], listening: "wasapi:{b}", sounds: ["Flat", "PSense Game"], sound: "PSense Game (edited)", bypass: false, running: true, micOn: null });
+const plays = tray.find((i) => i.id === "outputs")!.items!;
+if (plays[0].checked || !plays[1].checked) throw new Error(`the output in use is ticked: ${JSON.stringify(plays)}`);
+if (trayPick(plays[0].id).join("|") !== "output|wasapi:{a}") throw new Error(`device id round trip: ${trayPick(plays[0].id)}`);
+if (!tray.find((i) => i.id === "sounds")!.items![1].checked) throw new Error("an edited preset ticks the one it came from");
+if (tray.some((i) => i.id === "mic")) throw new Error("no mic item without a cable");
+if (!tray.find((i) => i.id === "bypass")!.checked) throw new Error("EQ on is ticked while not bypassed");
+console.log("tray ok");

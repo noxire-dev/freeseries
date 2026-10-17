@@ -806,8 +806,8 @@ export function Settings(p: {
 
       <h2>Closing the window</h2>
       <p className="hint">
-        Closing FreeSeries hides it in the tray next to the clock and your audio keeps running. To stop it completely, right-click the tray icon
-        and choose Quit.
+        Closing FreeSeries hides it in the tray next to the clock and your audio keeps running. Right-click the tray icon to switch the output,
+        the sound preset, the EQ or the mic without opening the window. To stop it completely, choose Quit there.
       </p>
 
       <h2>Log</h2>

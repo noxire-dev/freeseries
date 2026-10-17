@@ -12,7 +12,7 @@ use freeseries::routing::{AppRouting, AudioApp, Icon, WindowsRouting};
 use freeseries::native::Native;
 use freeseries::wasapi::Wasapi;
 use std::os::windows::process::CommandExt;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager, State, WindowEvent};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -511,15 +511,67 @@ fn release_apps(app: &tauri::AppHandle) {
     }
 }
 
-fn tray(app: &tauri::App) -> tauri::Result<()> {
+const TRAY: &str = "main";
+
+/// An entry of the tray's right-click menu. The UI owns what the menu shows (outputs, presets, the
+/// switches) and sends the whole list whenever that changes; a click comes back as a "tray" event
+/// carrying the id.
+#[derive(serde::Deserialize)]
+struct TrayItem {
+    id: String,
+    /// "-" is a separator.
+    label: String,
+    /// Set for a check item.
+    checked: Option<bool>,
+    /// Set for a submenu.
+    items: Option<Vec<TrayItem>>,
+}
+
+type MenuEntry = Box<dyn IsMenuItem<tauri::Wry>>;
+
+fn tray_items<M: Manager<tauri::Wry>>(app: &M, items: &[TrayItem]) -> tauri::Result<Vec<MenuEntry>> {
+    items
+        .iter()
+        .map(|item| -> tauri::Result<MenuEntry> {
+            Ok(if item.label == "-" {
+                Box::new(PredefinedMenuItem::separator(app)?)
+            } else if let Some(sub) = &item.items {
+                let inner = tray_items(app, sub)?;
+                Box::new(Submenu::with_id_and_items(app, &item.id, &item.label, true, &inner.iter().map(|i| i.as_ref()).collect::<Vec<_>>())?)
+            } else if let Some(checked) = item.checked {
+                Box::new(CheckMenuItem::with_id(app, &item.id, &item.label, true, checked, None::<&str>)?)
+            } else {
+                Box::new(MenuItem::with_id(app, &item.id, &item.label, true, None::<&str>)?)
+            })
+        })
+        .collect()
+}
+
+/// Open on top, Quit at the bottom, the UI's items between.
+fn tray_menu<M: Manager<tauri::Wry>>(app: &M, items: &[TrayItem]) -> tauri::Result<Menu<tauri::Wry>> {
     // "FreeSeries", or "FreeSeries dev" for a development build running next to the installed app.
     let name = app.config().product_name.clone().unwrap_or_else(|| "FreeSeries".into());
-    let open = MenuItem::with_id(app, "open", format!("Open {name}"), true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit (stops audio processing)", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &PredefinedMenuItem::separator(app)?, &quit])?;
-    let mut tray = TrayIconBuilder::new()
+    let mut all: Vec<MenuEntry> = vec![Box::new(MenuItem::with_id(app, "open", format!("Open {name}"), true, None::<&str>)?)];
+    if !items.is_empty() {
+        all.push(Box::new(PredefinedMenuItem::separator(app)?));
+        all.extend(tray_items(app, items)?);
+    }
+    all.push(Box::new(PredefinedMenuItem::separator(app)?));
+    all.push(Box::new(MenuItem::with_id(app, "quit", "Quit (stops audio processing)", true, None::<&str>)?));
+    Menu::with_items(app, &all.iter().map(|i| i.as_ref()).collect::<Vec<_>>())
+}
+
+#[tauri::command]
+fn set_tray_menu(app: tauri::AppHandle, items: Vec<TrayItem>) -> Result<(), String> {
+    let tray = app.tray_by_id(TRAY).ok_or("no tray icon")?;
+    tray.set_menu(Some(tray_menu(&app, &items).map_err(|e| e.to_string())?)).map_err(|e| e.to_string())
+}
+
+fn tray(app: &tauri::App) -> tauri::Result<()> {
+    let name = app.config().product_name.clone().unwrap_or_else(|| "FreeSeries".into());
+    let mut tray = TrayIconBuilder::with_id(TRAY)
         .tooltip(&name)
-        .menu(&menu)
+        .menu(&tray_menu(app, &[])?)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => show_main(app),
@@ -534,7 +586,10 @@ fn tray(app: &tauri::App) -> tauri::Result<()> {
                 app.state::<Headset>().stop(); // gives the dial back to the hardware
                 app.exit(0);
             }
-            _ => {}
+            // The UI's items: it knows what they mean.
+            id => {
+                let _ = app.emit("tray", id);
+            }
         })
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
@@ -627,6 +682,7 @@ pub fn run() {
             open_sound_settings,
             about,
             set_hotkeys,
+            set_tray_menu,
             set_agent,
             headset_state,
             headset_features,

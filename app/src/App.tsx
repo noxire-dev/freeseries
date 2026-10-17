@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AgentApi, HeadsetApi, HeadsetFeatures, HeadsetState, AppsApi, AutoEqApi, Device, EngineApi, HotkeyApi, InfoApi, LogApi, LogEntry, MicApi, MicSnapshot, Preset, SetupApi, StartupApi, Status, WindowApi } from "./api";
+import type { AgentApi, HeadsetApi, HeadsetFeatures, HeadsetState, AppsApi, AutoEqApi, Device, EngineApi, HotkeyApi, InfoApi, LogApi, LogEntry, MicApi, MicSnapshot, Preset, SetupApi, StartupApi, Status, TrayApi, WindowApi } from "./api";
+import { trayMenu, trayPick } from "./tray";
 import { findVirtualDevice, isCable, isCableInput, isCableUnnamed, shortName, virtualChannels } from "./devices";
 import { BUILTIN } from "./builtin";
 import { createAgent } from "./agent";
@@ -40,6 +41,7 @@ export default function App(p: {
   agent: AgentApi;
   headset: HeadsetApi;
   mic: MicApi;
+  tray: TrayApi;
   autoEq: AutoEqApi;
   settings: SettingsStore;
   /** A development build sits next to the installed app, so it must not start playing by itself. */
@@ -298,6 +300,36 @@ export default function App(p: {
     const stop = p.hotkeys.subscribe((action) => onHotkey.current(action));
     return () => void stop.then((unsubscribe) => unsubscribe());
   }, [p.hotkeys]);
+
+  // The tray's right-click menu shows the same state as the pages and acts through the same setters.
+  const trayItems = trayMenu({
+    outputs: outputs.map((o) => ({ id: o.id, name: shortName(o.name) })),
+    listening,
+    sounds: sounds.map((n) => n.name),
+    sound: sound.presetName,
+    bypass,
+    running,
+    micOn: cable && mic.device ? mic.on : null,
+  });
+  const trayKey = JSON.stringify(trayItems);
+  useEffect(() => void p.tray.setMenu(JSON.parse(trayKey)).catch(() => {}), [p.tray, trayKey]);
+  const onTray = useRef<(id: string) => void>(() => {});
+  onTray.current = (id) => {
+    const [kind, value] = trayPick(id);
+    if (kind === "output") setChosenOutput(value);
+    else if (kind === "sound") {
+      const named = sounds.find((n) => n.name === value);
+      if (named) applyPreset(named.preset, named.name);
+    } else if (kind === "bypass") {
+      setBypass(!bypass);
+      engine.setBypass(!bypass);
+    } else if (kind === "mic") setMicSettings((m) => ({ ...m, on: !m.on }));
+    else if (kind === "running") setRunning(!running);
+  };
+  useEffect(() => {
+    const stop = p.tray.subscribe((id) => onTray.current(id));
+    return () => void stop.then((unsubscribe) => unsubscribe());
+  }, [p.tray]);
 
   // An agent's tools act on whatever the state is when they are called, through the same setters as the UI.
   const agentHost = useRef<AgentHost>(null!);
