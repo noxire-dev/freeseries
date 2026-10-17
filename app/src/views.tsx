@@ -361,7 +361,7 @@ export function Presets(p: {
 }
 
 /** The AutoEq search: measured corrections for a headphone model, one of which the output can carry. */
-function CorrectionPicker(p: { autoEq: AutoEqApi; forOutput: string; current: NamedPreset | null; onPick(entry: AutoEqEntry): Promise<void>; onClear(): void }) {
+function CorrectionPicker(p: { autoEq: AutoEqApi; current: NamedPreset | null; onPick(entry: AutoEqEntry): Promise<void> }) {
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState<AutoEqEntry[]>();
   const [error, setError] = useState<string>();
@@ -370,28 +370,15 @@ function CorrectionPicker(p: { autoEq: AutoEqApi; forOutput: string; current: Na
     if (query.trim().length < 2 || index) return;
     p.autoEq.index().then(setIndex, (e) => setError(String(e.message ?? e)));
   }, [query, index, p.autoEq]);
-  const words = query.toLowerCase().split(/\\s+/).filter(Boolean);
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   const results = useMemo(
     () => (index && query.trim().length >= 2 ? index.filter((e) => words.every((w) => e.name.toLowerCase().includes(w))).slice(0, 40) : []),
     [index, query],
   );
   return (
     <div className="picker">
-      <h3 className="picker-title">Headphone correction for {p.forOutput}</h3>
       <input className="text text-search" type="search" autoFocus placeholder="Search by model, e.g. AirPods Pro" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search headphones" />
-      <p className="hint">
-        Measured by the AutoEq project on a test rig, downloaded when you pick one. Choose the model you are wearing, not one you like the
-        sound of: a correction only makes sense for the headphones it was measured on. It assumes the headset's own EQ is off; if it has
-        one, switch it off or the two will stack.
-        {p.current && (
-          <>
-            {" "}
-            <button className="link" onClick={p.onClear}>
-              Remove the current correction
-            </button>
-          </>
-        )}
-      </p>
+      <p className="hint">Pick the model you wear, not one you like the sound of. If the headset has its own EQ, switch it off or the two stack.</p>
       {error && <p className="notice">{error}</p>}
       {query.trim().length >= 2 && !index && !error && <p className="hint">Loading the headphone list…</p>}
       {index && query.trim().length >= 2 && results.length === 0 && <p className="hint">No model matches “{query}”. Try fewer words.</p>}
@@ -453,6 +440,7 @@ export function Devices(p: {
   openCorrection?: string;
 }) {
   const virtual = p.detected?.id ?? p.source;
+  // The output whose correction is open for picking, if any.
   const [picking, setPicking] = useState<string | null>(p.openCorrection ?? null);
   // Which device Windows plays to can change behind our back, so it is asked again every few seconds.
   const [defaultId, setDefaultId] = useState<string | null>();
@@ -464,9 +452,16 @@ export function Devices(p: {
   }, [p.setup]);
   const extras = p.devices.filter((d) => isVirtualDevice(d) && d.id !== virtual && /^freeseries /i.test(d.name)).map((d) => d.name.replace(/ \(.*\)$/, ""));
   const chosen = new Set(p.outputs.map((o) => o.id));
+  const online = (id: string) => p.devices.some((d) => d.id === id);
+  const nameOf = (o: SavedOutput) => p.devices.find((d) => d.id === o.id)?.name ?? o.name;
   // Spatial sound on the FreeSeries device and on an output too: everything goes through it twice.
   const doubled = p.devices.find((d) => d.id === virtual)?.spatial ? p.devices.filter((d) => chosen.has(d.id) && d.spatial).map((d) => d.name.replace(/ \(.*\)$/, "")) : [];
   const available = p.devices.filter((d) => d.id !== virtual && !chosen.has(d.id) && !isVirtualDevice(d) && !isCableInput(d));
+  // With switching off only the first output (or the one picked by hand) ever plays.
+  const pinned = p.chosen && chosen.has(p.chosen) ? p.chosen : null;
+  const first = pinned ?? p.outputs[0]?.id;
+  // The correction belongs to what you listen on: the output playing, else the one that would.
+  const corrected = p.outputs.find((o) => o.id === (picking ?? p.activeId ?? first));
   // Reordering: drag a row, or use its arrow buttons (keyboard and screen readers).
   const [drag, setDrag] = useState<number | null>(null);
   const [over, setOver] = useState<number | null>(null);
@@ -500,11 +495,8 @@ export function Devices(p: {
             </li>
           </ul>
           <p className="hint hint-below">
-            Everything on your PC plays into this device, and FreeSeries passes it on to what you listen on, with your EQ. It is the Windows
-            default while audio runs; when you stop or quit, or if FreeSeries ever crashes, Windows goes back to playing straight to your
-            output. Turn spatial sound on for it if you use Atmos or DTS.
-            {extras.length > 0 &&
-              ` Windows also lists ${extras.join(" and ")}: ${extras.length === 1 ? "that is a channel" : "those are channels"}, not something to pick as your default. Apps get onto a channel in the Mixer.`}
+            Everything plays into this device and FreeSeries passes it on to what you listen on. Turn spatial sound on for it if you use Atmos or DTS.
+            {extras.length > 0 && ` ${extras.join(" and ")} ${extras.length === 1 ? "is a channel" : "are channels"} for the Mixer, not a default to pick.`}
           </p>
         </>
       ) : (
@@ -530,84 +522,73 @@ export function Devices(p: {
       )}
 
       <h2>You listen on</h2>
-      <p className="hint">
-        {p.autoSwitch
-          ? "Drag them into the order you prefer. FreeSeries plays on the highest one that's switched on: when it goes off, audio moves down the list, and when it comes back, audio moves back up. To listen on another one right now, press Play here."
-          : "FreeSeries only plays on the first one. Press Play here on another to use that instead."}{" "}
-        Every headphone model has its own bumps; a correction cancels them so yours sound neutral, the way the game was mixed. Pick the one
-        for the headphones you wear, once. The sound presets in the Mixer are your taste on top of that. Leave spatial sound off on these so
-        it isn't applied twice.
-      </p>
       {p.outputs.length > 0 && (
         <ol className="group" onDragLeave={(e) => e.currentTarget.contains(e.relatedTarget as Node) || setOver(null)}>
-          {p.outputs.map((o, i) => (
-            <li
-              key={o.id}
-              className={`row row-draggable${drag === i ? " is-dragging" : ""}${over === i && drag !== null && drag !== i ? (drag < i ? " is-over-below" : " is-over-above") : ""}${!p.autoSwitch && o.id !== (p.chosen && p.outputs.some((x) => x.id === p.chosen) ? p.chosen : p.outputs[0].id) ? " is-unused" : ""}`}
-              draggable
-              onDragStart={(e) => {
-                setDrag(i);
-                e.dataTransfer.effectAllowed = "move";
-                e.dataTransfer.setData("text/plain", o.id);
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = "move";
-                setOver(i);
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                if (drag !== null && drag !== i) move(drag, i);
-              }}
-              onDragEnd={() => {
-                setDrag(null);
-                setOver(null);
-              }}
-            >
-              <svg className="grip" viewBox="0 0 10 16" aria-hidden="true">
-                <path d="M3 3h.01M7 3h.01M3 8h.01M7 8h.01M3 13h.01M7 13h.01" />
-              </svg>
-              <span className="row-order">{i + 1}</span>
-              <span className="row-title">{p.devices.find((d) => d.id === o.id)?.name ?? (o.name || "Disconnected device")}</span>
-              {o.id === p.activeId ? <span className="badge">Playing</span> : !p.devices.some((d) => d.id === o.id) && <span className="row-detail">Not connected</span>}
-              {o.id === p.chosen ? (
-                <button className="link" onClick={() => p.onChoose(null)} title="Go back to the order of this list">
-                  Chosen by you: undo
-                </button>
-              ) : (
-                o.id !== p.activeId &&
-                p.devices.some((d) => d.id === o.id) && (
-                  <button className="link" onClick={() => p.onChoose(o.id)} title="Play on this one now, whatever the order says">
-                    Play here
+          {p.outputs.map((o, i) => {
+            const state = o.id === p.activeId ? "playing" : online(o.id) ? "online" : "offline";
+            return (
+              <li
+                key={o.id}
+                className={`row row-draggable${drag === i ? " is-dragging" : ""}${over === i && drag !== null && drag !== i ? (drag < i ? " is-over-below" : " is-over-above") : ""}${!p.autoSwitch && o.id !== first ? " is-unused" : ""}`}
+                draggable
+                onDragStart={(e) => {
+                  setDrag(i);
+                  e.dataTransfer.effectAllowed = "move";
+                  e.dataTransfer.setData("text/plain", o.id);
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  setOver(i);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (drag !== null && drag !== i) move(drag, i);
+                }}
+                onDragEnd={() => {
+                  setDrag(null);
+                  setOver(null);
+                }}
+              >
+                <svg className="grip" viewBox="0 0 10 16" aria-hidden="true">
+                  <path d="M3 3h.01M7 3h.01M3 8h.01M7 8h.01M3 13h.01M7 13h.01" />
+                </svg>
+                <span className="row-order">{i + 1}</span>
+                <span className={`status-dot is-${state === "playing" ? "running" : state}`} aria-hidden="true" />
+                <span className="row-title">{nameOf(o)}</span>
+                {state === "playing" ? <span className="badge">Playing</span> : <span className="row-detail">{state === "online" ? "Online" : "Offline"}</span>}
+                {o.id === p.chosen ? (
+                  <button className="link" onClick={() => p.onChoose(null)} title="Go back to the order of this list">
+                    Unpin
                   </button>
-                )
-              )}
-              <button className="link" onClick={() => setPicking(picking === o.id ? null : o.id)} title="Headphone correction">
-                {o.correction ? o.correction.name : "No correction"}
-              </button>
-              <button className="icon-button" onClick={() => move(i, i - 1)} disabled={i === 0} aria-label={`Move ${o.name} up`} title="Prefer this one more">
-                <svg viewBox="0 0 12 12"><path d="M2.5 7.5 6 4l3.5 3.5" /></svg>
-              </button>
-              <button className="icon-button" onClick={() => move(i, i + 1)} disabled={i === p.outputs.length - 1} aria-label={`Move ${o.name} down`} title="Prefer this one less">
-                <svg viewBox="0 0 12 12"><path d="M2.5 4.5 6 8l3.5-3.5" /></svg>
-              </button>
-              <button className="icon-button is-danger" onClick={() => p.onOutputs(p.outputs.filter((x) => x.id !== o.id))} aria-label={`Remove ${o.name}`} title="Remove">
-                <svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" /></svg>
-              </button>
-            </li>
-          ))}
+                ) : (
+                  state === "online" && (
+                    <button className="link" onClick={() => p.onChoose(o.id)} title="Play on this one now, whatever the order says">
+                      Play here
+                    </button>
+                  )
+                )}
+                <button className="icon-button" onClick={() => move(i, i - 1)} disabled={i === 0} aria-label={`Move ${o.name} up`} title="Prefer this one more">
+                  <svg viewBox="0 0 12 12"><path d="M2.5 7.5 6 4l3.5 3.5" /></svg>
+                </button>
+                <button className="icon-button" onClick={() => move(i, i + 1)} disabled={i === p.outputs.length - 1} aria-label={`Move ${o.name} down`} title="Prefer this one less">
+                  <svg viewBox="0 0 12 12"><path d="M2.5 4.5 6 8l3.5-3.5" /></svg>
+                </button>
+                <button className="icon-button is-danger" onClick={() => p.onOutputs(p.outputs.filter((x) => x.id !== o.id))} aria-label={`Remove ${o.name}`} title="Remove">
+                  <svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" /></svg>
+                </button>
+              </li>
+            );
+          })}
         </ol>
       )}
-      {picking && p.outputs.some((o) => o.id === picking) && (
-        <CorrectionPicker
-          key={picking}
-          autoEq={p.autoEq}
-          forOutput={p.devices.find((d) => d.id === picking)?.name ?? p.outputs.find((o) => o.id === picking)?.name ?? "this output"}
-          current={p.outputs.find((o) => o.id === picking)?.correction ?? null}
-          onPick={(entry) => p.onLoadAutoEq(picking, entry)}
-          onClear={() => p.onCorrection(picking, null)}
-        />
-      )}
+      <p className="hint hint-below">
+        {p.outputs.length === 0
+          ? "Add the headphones and speakers you use."
+          : p.autoSwitch
+            ? "In your order of preference: audio plays on the highest one that is online and moves when that changes."
+            : "Only the first one plays."}
+      </p>
       {doubled.length > 0 && (
         <p className="notice">
           Spatial sound is also switched on for {doubled.join(" and ")}. Sound that was already made spatial on the FreeSeries device goes
@@ -632,15 +613,40 @@ export function Devices(p: {
           {available.map((d) => (
             <li key={d.id} className="row">
               <span className="row-title">{d.name}</span>
-              <span className="row-detail">
-                {d.channels} ch, {d.sampleRate / 1000} kHz
-              </span>
               <button className="link" onClick={() => p.onOutputs([...p.outputs, { id: d.id, name: d.name }])}>
                 Add
               </button>
             </li>
           ))}
         </ul>
+      )}
+
+      {corrected && (
+        <>
+          <h2>Headphone correction</h2>
+          <ul className="group">
+            <li className="row">
+              <span className="row-title">{shortName(nameOf(corrected))}</span>
+              <span className="row-detail">{corrected.correction?.name ?? "None"}</span>
+              {corrected.correction && (
+                <button className="link link-danger" onClick={() => p.onCorrection(corrected.id, null)}>
+                  Remove
+                </button>
+              )}
+              <button className="link" onClick={() => setPicking(picking ? null : corrected.id)}>
+                {picking ? "Done" : corrected.correction ? "Change" : "Find yours"}
+              </button>
+            </li>
+          </ul>
+          {picking ? (
+            <CorrectionPicker key={corrected.id} autoEq={p.autoEq} current={corrected.correction ?? null} onPick={(entry) => p.onLoadAutoEq(corrected.id, entry)} />
+          ) : (
+            <p className="hint hint-below">
+              Every headphone model has its own bumps. A correction, measured by the AutoEq project, cancels them so games sound the way they
+              were mixed. Your sound presets sit on top.
+            </p>
+          )}
+        </>
       )}
 
       <div className="actions">
