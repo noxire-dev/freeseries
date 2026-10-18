@@ -245,14 +245,13 @@ a,
   box-shadow: 0 0 8px rgb(48 209 88 / 0.6);
 }
 
-/* An output on the Devices page: solid when Windows lists it, hollow when it is away. */
+/* An output on the Devices page: green when Windows lists it, red when it is away. */
 .status-dot.is-online {
-  background: var(--label-2);
+  background: var(--green);
 }
 
 .status-dot.is-offline {
-  background: transparent;
-  box-shadow: inset 0 0 0 1.5px var(--label-3);
+  background: var(--red);
 }
 
 .status-dot.is-reconnecting {

@@ -554,9 +554,9 @@ export function Devices(p: {
                   <path d="M3 3h.01M7 3h.01M3 8h.01M7 8h.01M3 13h.01M7 13h.01" />
                 </svg>
                 <span className="row-order">{i + 1}</span>
-                <span className={`status-dot is-${state === "playing" ? "running" : state}`} aria-hidden="true" />
+                <span className={`status-dot is-${state === "playing" ? "running" : state}`} role="img" aria-label={state} title={state === "offline" ? "Offline" : "Online"} />
                 <span className="row-title">{nameOf(o)}</span>
-                {state === "playing" ? <span className="badge">Playing</span> : <span className="row-detail">{state === "online" ? "Online" : "Offline"}</span>}
+                {state === "playing" && <span className="badge">Playing</span>}
                 {o.id === p.chosen ? (
                   <button className="link" onClick={() => p.onChoose(null)} title="Go back to the order of this list">
                     Unpin
