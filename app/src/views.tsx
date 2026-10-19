@@ -174,7 +174,7 @@ export function Equalizer(p: {
               </button>
               {p.onBrowsePresets && (
                 <button className="button" onClick={p.onBrowsePresets}>
-                  Find a preset for your headphones
+                  Browse presets
                 </button>
               )}
             </div>
@@ -794,9 +794,9 @@ export function Settings(p: {
         </p>
       )}
       <p className="hint hint-below">
-        Tell an agent what you listen on and what bothers you, and it tunes the EQ with you: it can read your setup, measure what is playing, change a
-        channel's sound, and look up the correction for your headphones. It can't install anything or touch other apps. Only programs on this PC
-        that have the token can connect. What it replaces is kept in Presets as “(before agent)”.
+        Tell an agent what bothers you and it tunes the EQ with you: it reads your setup, measures what is playing, changes a channel's sound and
+        looks up your headphones' correction. It can't install anything or touch other apps, and only programs on this PC with the token can
+        connect. What it replaces is kept in Presets as “(before agent)”.
       </p>
       {p.agent.error && <p className="notice">{p.agent.error}</p>}
 
@@ -1335,8 +1335,8 @@ export function Plugins(p: {
           </li>
         </ul>
         <p className="hint hint-below">
-          Plugins are part of FreeSeries and come with its updates. Each one is a small table describing a device, written and checked by
-          someone who owns it: a headset you would like to see here can be added on GitHub.
+          Each plugin is a small table describing a device, written by someone who owns it and shipped with FreeSeries. A headset you'd like to
+          see here can be added on GitHub.
         </p>
       </div>
     );

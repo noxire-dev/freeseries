@@ -3,6 +3,9 @@ name = "freeseries"
 version = "0.3.0"
 edition = "2024"
 license = "AGPL-3.0-or-later"
+description = "Parametric EQ and virtual mixer for Windows that keeps your own Dolby Atmos or DTS: a free SteelSeries Sonar alternative"
+repository = "https://github.com/noxire-dev/freeseries"
+readme = "README.md"
 
 [dependencies]
 cpal = "0.18"

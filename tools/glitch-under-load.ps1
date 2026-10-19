@@ -6,8 +6,8 @@
 # Runs a dev engine Media -> monitor with a test tone through it, a heavy parallel compile as the
 # load, and reports: glitches the dev engine logged, what the tone measured, and what the installed
 # engine logged in the same window (its own channel, its own output: a second witness).
-param([string]$Channels = '1', [string]$Output = '2', [int]$Seconds = 60, [string]$Engine = "C:\Users\noxire\falke\Projects\freeseries_radar\target\release\freeseries.exe", [string]$Label = "current code")
-$root = "C:\Users\noxire\falke\Projects\freeseries_radar"
+param([string]$Channels = '1', [string]$Output = '2', [int]$Seconds = 60, [string]$Engine = (Join-Path (Split-Path $PSScriptRoot -Parent) 'target\release\freeseries.exe'), [string]$Label = "current code")
+$root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 $t = $env:TEMP
 $prodLog = "$env:LOCALAPPDATA\dev.freeseries.app\logs\FreeSeries.log"

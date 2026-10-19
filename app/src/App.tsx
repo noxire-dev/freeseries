@@ -429,7 +429,7 @@ export default function App(p: {
             ))}
           </nav>
         ))}
-        <button className="status" onClick={() => setView("devices")} title="Open Devices">
+        <button className="status" onClick={() => setView("devices")} title={statusDetail}>
           <span className={`status-dot is-${status.state}`} />
           <span>
             <strong>{STATUS_TEXT[status.state]}</strong>

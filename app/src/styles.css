@@ -225,11 +225,18 @@ a,
   font-weight: 600;
 }
 
+.status > span {
+  min-width: 0;
+}
+
 .status small {
   display: block;
   font-size: 11px;
   color: var(--label-2);
   line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .status-dot {
