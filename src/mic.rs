@@ -232,6 +232,9 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
     let mut dry: VecDeque<f32> = std::iter::repeat_n(0.0, RNNOISE_DELAY).collect(); // the raw voice, lined up with RNNoise's output
     let mut eq = Eq::new(&settings.eq.get(), s.rate as f64, 1);
     let mut monitor_q: Vec<f32> = Vec::new(); // mono, waiting for the monitor
+    // Evidence for a voice that sounds wrong, once a second: packets the mic reported losing, and
+    // wakes that found the cable's buffer empty (it played silence to Discord until this write).
+    let (mut skipped, mut ran_dry) = (0u32, 0u32);
     let result = loop {
         if stop.load(Relaxed) {
             break Ok(());
@@ -254,6 +257,9 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
                 break;
             }
             let silent = flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0;
+            if flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY.0 as u32 != 0 {
+                skipped += 1;
+            }
             let samples = std::slice::from_raw_parts(data as *const f32, got as usize * s.in_ch);
             pending.extend(samples.chunks_exact(s.in_ch).map(|f| if silent { 0.0 } else { f[0] }));
             if s.reader.ReleaseBuffer(got).is_err() {
@@ -306,6 +312,9 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
         if !primed && ready < ahead {
             continue;
         }
+        if primed && padding == 0 {
+            ran_dry += 1;
+        }
         primed = true;
         let space = (s.out_size - padding).min(ahead.saturating_sub(padding)).min(ready);
         if space == 0 {
@@ -326,6 +335,10 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
             if short * s.out_ch > tuning.slack {
                 log::info!("mic: the cable is {} ms short of two periods: stretching the mic over it", short * 1000 / s.rate as usize);
                 feed.hold_back(short);
+            }
+            if skipped > 0 || ran_dry > 0 {
+                log::warn!("mic: in the last second the microphone skipped {skipped} packet(s) and the cable ran dry {ran_dry} time(s): that is a gap in the voice");
+                (skipped, ran_dry) = (0, 0);
             }
         }
         if let Err(e) = s.writer.ReleaseBuffer(space, 0) {

@@ -232,3 +232,31 @@ a `spectrum::Tap` in `mic::Settings`, fed by the mic thread while an agent looks
 `mic_spectrum`. It returns the 30-band average and the overall level, so an agent can compare a
 spoken passage with a silent one at different strengths. `set_mic` takes the strength and/or the
 EQ (same validation as `set_eq`). Checked by `npm run check` against a fake host.
+
+## "Your voice sounds terrible" (2026-10-26)
+
+Looked into without a voice to listen to (the user's mic read -94 dBFS, the headset muted or
+nobody talking), so what follows is what could be measured.
+
+- The installed build is the current code (exe 2026-10-19 01:37, HEAD e478057). Windows has both
+  endpoints at 100 %, unmuted, no enhancements.
+- The log's only mic lines are "the cable is 10 ms short ... stretching", every 11 s to 14 min,
+  always 10 ms then 5 ms a second later. That is one mic packet arriving late over the 2.4 GHz
+  link, not clock drift (drift would be steady); the feed reads 0.5 % slower for two seconds and
+  then 0.5 % faster to let the late packet out again: 9 cents of pitch wobble, not audible on a
+  voice. A packet later than the cable's two periods would be a gap, and that was not logged
+  because nothing checked for it. Now checked: `AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY` on the
+  mic's packets and a wake that finds the cable's buffer empty, one warning per second.
+- The processing itself, offline (`examples/micfile.rs`: a 48 kHz WAV through RNNoise and the
+  strength mix exactly as `mic.rs` does it, Windows text-to-speech as the voice): during words it
+  changes nothing below 3 kHz; with white noise at -40 dBFS it trims 2.5 dB at 6-10 kHz and 4 dB
+  above; with noise at -30 dBFS (a loud room) 9 and 13 dB, which is "muffled". Between words it
+  takes 8-17 dB off. Strength 0.5 halves all of that. So on a clean headset mic RNNoise is not
+  what ruins a voice; in a loud room at strength 1 it dulls it.
+- Still open, and the likeliest: Discord's own noise suppression (Krisp), echo cancellation and
+  automatic gain control running on a signal that is already gated and denoised. Two suppressors
+  in series is the classic "underwater" voice, and AGC pumps on the gated silence between words.
+
+To settle it: `tools/mic-ab.ps1` records the headset mic and "FreeSeries Mic" at the same time
+while the user talks, so both can be heard side by side. Run it at strength 0, 0.5 and 1, and
+with Discord's noise suppression off.
