@@ -46,3 +46,22 @@ export function virtualChannels(devices: Device[]): VirtualChannel[] {
     });
   return [{ key: "main", label: extras.length ? "Game" : "Everything", device: main }, ...extras];
 }
+
+/**
+ * A saved output whose id Windows no longer lists, while a device of the same name is listed and
+ * not saved yet, is that device under a new id: an HDMI or DisplayPort monitor gets a fresh endpoint
+ * every time the GPU re-detects it. Returns the same array when nothing moved.
+ */
+export function adoptRenamed<T extends { id: string; name: string }>(outputs: T[], devices: Device[]): T[] {
+  const saved = new Set(outputs.map((o) => o.id));
+  let moved = false;
+  const next = outputs.map((o) => {
+    if (saved.has(o.id) && devices.some((d) => d.id === o.id)) return o;
+    const same = devices.find((d) => d.name === o.name && !saved.has(d.id) && !isVirtualDevice(d));
+    if (!same) return o;
+    moved = true;
+    saved.add(same.id);
+    return { ...o, id: same.id };
+  });
+  return moved ? next : outputs;
+}

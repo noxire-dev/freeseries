@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentApi, HeadsetApi, HeadsetFeatures, HeadsetState, AppsApi, AutoEqApi, Device, EngineApi, HotkeyApi, InfoApi, LogApi, LogEntry, MicApi, MicSnapshot, Preset, SetupApi, StartupApi, Status, TrayApi, WindowApi } from "./api";
 import { trayMenu, trayPick } from "./tray";
-import { findVirtualDevice, isCable, isCableInput, isCableUnnamed, shortName, virtualChannels } from "./devices";
+import { adoptRenamed, findVirtualDevice, isCable, isCableInput, isCableUnnamed, shortName, virtualChannels } from "./devices";
 import { BUILTIN } from "./builtin";
 import { createAgent } from "./agent";
 import { useScreen } from "./screen";
@@ -108,6 +108,14 @@ export default function App(p: {
   );
 
   // The mic path follows its settings; the backend keeps it open and reopens it by itself.
+  // A monitor comes back from a restart under a new endpoint id; the saved entry follows it.
+  useEffect(() => {
+    const moved = adoptRenamed(outputs, devices);
+    if (moved === outputs) return;
+    setOutputs(moved);
+    const was = outputs.findIndex((o) => o.id === chosenOutput);
+    if (was >= 0 && moved[was].id !== chosenOutput) setChosenOutput(moved[was].id);
+  }, [devices]); // eslint-disable-line react-hooks/exhaustive-deps
   const cable = devices.find(isCableInput);
   // A cable still under VB-Audio's names gets ours: "FreeSeries Mic" to pick, "FreeSeries Mic Feed - do not pick" the other end.
   useEffect(() => {
@@ -628,6 +636,7 @@ export default function App(p: {
             onAutoSwitch={setAutoSwitch}
             chosen={chosenOutput}
             onChoose={setChosenOutput}
+            headsetAway={headset?.online === false && headset.model ? headset.model.replace(/ Wireless$/, "") : null}
             status={status}
             onSource={setSource}
             onOutputs={setOutputs}

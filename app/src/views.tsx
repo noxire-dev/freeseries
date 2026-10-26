@@ -425,6 +425,8 @@ export function Devices(p: {
   /** The output picked by hand to play on now, ahead of the order. */
   chosen: string | null;
   onChoose(id: string | null): void;
+  /** The headset's model name while it says it is switched off: its output stays listed by Windows, but nothing plays there. */
+  headsetAway: string | null;
   status: Status;
   onAutoSwitch(enabled: boolean): void;
   onSource(id: string): void;
@@ -452,8 +454,8 @@ export function Devices(p: {
   }, [p.setup]);
   const extras = p.devices.filter((d) => isVirtualDevice(d) && d.id !== virtual && /^freeseries /i.test(d.name)).map((d) => d.name.replace(/ \(.*\)$/, ""));
   const chosen = new Set(p.outputs.map((o) => o.id));
-  const online = (id: string) => p.devices.some((d) => d.id === id);
   const nameOf = (o: SavedOutput) => p.devices.find((d) => d.id === o.id)?.name ?? o.name;
+  const online = (o: SavedOutput) => p.devices.some((d) => d.id === o.id) && !(p.headsetAway && nameOf(o).includes(p.headsetAway));
   // Spatial sound on the FreeSeries device and on an output too: everything goes through it twice.
   const doubled = p.devices.find((d) => d.id === virtual)?.spatial ? p.devices.filter((d) => chosen.has(d.id) && d.spatial).map((d) => d.name.replace(/ \(.*\)$/, "")) : [];
   const available = p.devices.filter((d) => d.id !== virtual && !chosen.has(d.id) && !isVirtualDevice(d) && !isCableInput(d));
@@ -525,7 +527,7 @@ export function Devices(p: {
       {p.outputs.length > 0 && (
         <ol className="group" onDragLeave={(e) => e.currentTarget.contains(e.relatedTarget as Node) || setOver(null)}>
           {p.outputs.map((o, i) => {
-            const state = o.id === p.activeId ? "playing" : online(o.id) ? "online" : "offline";
+            const state = o.id === p.activeId ? "playing" : online(o) ? "online" : "offline";
             return (
               <li
                 key={o.id}

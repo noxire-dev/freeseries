@@ -1,7 +1,8 @@
 // Runnable check that the drawn curve matches the engine's filters: `npm run check`.
 import { bandGainDb, combine, formatPreset, totalGainDb } from "./eqmath.ts";
-import { migrate } from "./store.ts";
+import { FLAT, migrate } from "./store.ts";
 import { trayMenu, trayPick } from "./tray.ts";
+import { adoptRenamed } from "./devices.ts";
 
 const near = (actual: number, expected: number, what: string) => {
   if (Math.abs(actual - expected) >= 0.1) throw new Error(`${what}: got ${actual.toFixed(2)}, expected ${expected}`);
@@ -101,3 +102,13 @@ if (!tray.find((i) => i.id === "sounds")!.items![1].checked) throw new Error("an
 if (tray.some((i) => i.id === "mic")) throw new Error("no mic item without a cable");
 if (!tray.find((i) => i.id === "bypass")!.checked) throw new Error("EQ on is ticked while not bypassed");
 console.log("tray ok");
+
+// A monitor back under a new endpoint id is adopted by its saved entry (correction and all); a
+// device that is already saved is not stolen; nothing moved returns the same array.
+const savedOutputs = [{ id: "wasapi:{old}", name: "Odyssey G65B (NVIDIA High Definition Audio)", correction: { name: "x", preset: FLAT } }, { id: "wasapi:{a}", name: "Headphones (Arctis)" }];
+const listed = [{ id: "wasapi:{new}", name: "Odyssey G65B (NVIDIA High Definition Audio)", channels: 2, sampleRate: 48000 }, { id: "wasapi:{a}", name: "Headphones (Arctis)", channels: 2, sampleRate: 48000 }];
+const adopted = adoptRenamed(savedOutputs, listed);
+if (adopted[0].id !== "wasapi:{new}" || adopted[0].correction?.name !== "x" || adopted[1].id !== "wasapi:{a}") throw new Error(`adoption: ${JSON.stringify(adopted)}`);
+if (adoptRenamed(adopted, listed) !== adopted) throw new Error("nothing moved should return the same array");
+if (adoptRenamed([{ id: "wasapi:{gone}", name: "Headphones (Arctis)" }, savedOutputs[1]], listed)[0].id !== "wasapi:{gone}") throw new Error("a saved device must not be stolen by another entry");
+console.log("devices ok");
