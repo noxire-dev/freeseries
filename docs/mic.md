@@ -260,3 +260,14 @@ nobody talking), so what follows is what could be measured.
 To settle it: `tools/mic-ab.ps1` records the headset mic and "FreeSeries Mic" at the same time
 while the user talks, so both can be heard side by side. Run it at strength 0, 0.5 and 1, and
 with Discord's noise suppression off.
+
+## The stretch lines come in bursts (2026-10-28)
+
+Over 2026-10-27 the "cable is 10 ms short ... stretching" lines ran at 8-26 an hour most of the
+day and 99, 251 and 161 an hour at 13h, 15h and 16h: a mic packet late at the cable's wake every
+17 s (median) instead of every few minutes. That is when the headset is in use; with it muted,
+`examples/micjitter.rs` saw 9000 packets in 90 s with none more than 15 ms apart and the mic clock
+5 ppm off the wall clock. Each event is 2 s of 0.5 % slower then faster, which nobody hears; what
+would hurt is a packet later than the cable's 20 ms of cushion, which the installed build (still
+2026-10-19) cannot log. The build after it counts those once a second. Until it is installed and
+the user talks on the headset, "every 17 s" is the one hard number.
