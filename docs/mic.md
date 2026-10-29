@@ -271,3 +271,19 @@ day and 99, 251 and 161 an hour at 13h, 15h and 16h: a mic packet late at the ca
 would hurt is a packet later than the cable's 20 ms of cushion, which the installed build (still
 2026-10-19) cannot log. The build after it counts those once a second. Until it is installed and
 the user talks on the headset, "every 17 s" is the one hard number.
+
+## The stretch lines were phase, not drift (2026-10-29)
+
+Measured while a burst was running (103 lines in 30 min): the Arctis mic delivered 6000 packets in
+60 s with none more than 15 ms apart, 11 ppm off the wall clock (`examples/micjitter.rs`), and the
+cable's audio clock ran at the wall clock's rate (`examples/cableclock.rs`, silence played into
+"FreeSeries Mic Feed", `IAudioClock` against QPC: 0 ppm between 40 and 50 s). Nothing drifts. The
+mic and the cable are two 10 ms clocks; when their phases pass through each other, a packet lands
+just after the cable's wake, that wake writes nothing, the next one sees two packets and refills
+the device. No gap: the device is kept two periods ahead. But the once-a-second sample of "how
+short is the device" sometimes landed on the empty wake and called `hold_back` for a shortfall that
+was already gone, so the feed read 0.5 % slower for two seconds and 0.5 % faster after: during a
+burst the voice wobbled 9 cents up and down continuously. Now the decision uses the least shortfall
+seen over the whole second: one empty wake no longer counts, a device short at every write (a
+really slower mic clock) still does. The "late wireless packet" reading of 2026-10-26 and 10-28
+above was wrong; this is what the lines were.

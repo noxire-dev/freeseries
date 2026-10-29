@@ -225,6 +225,10 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
     let window = ms(1000);
     let mut played = 0usize;
     let mut primed = false; // the first write fills the device to two periods; until then nothing is written
+    // The least the device was short at a write this second. One short write is the mic's packet
+    // landing just after the cable's wake (two 10 ms clocks passing through phase), which the next
+    // wake makes up with two packets; only a device short at every write has a slower mic clock.
+    let mut least_short = usize::MAX;
     let mut pending: Vec<f32> = Vec::with_capacity(FRAME * 4); // mono, waiting for a whole RNNoise frame
     let mut denoiser = DenoiseState::new();
     let mut clean = [0f32; FRAME];
@@ -321,6 +325,7 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
             continue;
         }
         let short = ahead.saturating_sub(padding + space) as usize; // how far below two periods the device is left
+        least_short = least_short.min(short);
         let buffer = match s.writer.GetBuffer(space) {
             Ok(b) => b,
             Err(e) => break Err(format!("cable: {e}")),
@@ -332,10 +337,11 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
         feed.mix_into(data, now_ms, second_over, &tuning);
         if second_over {
             played = 0;
-            if short * s.out_ch > tuning.slack {
-                log::info!("mic: the cable is {} ms short of two periods: stretching the mic over it", short * 1000 / s.rate as usize);
-                feed.hold_back(short);
+            if least_short * s.out_ch > tuning.slack {
+                log::info!("mic: the cable stayed {} ms short of two periods all second: stretching the mic over it", least_short * 1000 / s.rate as usize);
+                feed.hold_back(least_short);
             }
+            least_short = usize::MAX;
             if skipped > 0 || ran_dry > 0 {
                 log::warn!("mic: in the last second the microphone skipped {skipped} packet(s) and the cable ran dry {ran_dry} time(s): that is a gap in the voice");
                 (skipped, ran_dry) = (0, 0);
