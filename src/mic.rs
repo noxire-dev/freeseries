@@ -212,19 +212,22 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
     join_pro_audio();
     let started = Instant::now();
     let ms = |n: usize| s.rate as usize * s.out_ch * n / 1000;
-    // No cushion in the queue: the device buffer is the cushion. It is kept two periods ahead, and
-    // only what the queue holds is written, so a wake without a packet leaves it one period low and
-    // the next wake, with two packets, fills it back up. Below two periods for a whole second means
-    // the mic's clock is slower than the cable's: the queue is then stretched over the difference.
+    // No cushion in the queue: the device buffer is the cushion. It is kept three periods ahead,
+    // and only what the queue holds is written, so a wake without a packet leaves it one period low
+    // and the next wake, with two packets, fills it back up. Three, not two (2026-11-02): at two, one
+    // missed packet left the cable with nothing in hand at the next wake, and a late wake after a
+    // stall left it that way for the two seconds the stretch below took to pay the period back,
+    // with every wake a gap waiting to happen. Below three periods for a whole second means the
+    // mic's clock is slower than the cable's: the queue is then stretched over the difference.
     let tuning = Tuning { cushion: 0, slack: ms(2), frame: s.out_ch, per_ms: ms(1) };
     let last_packet_ms = Arc::new(AtomicU64::new(0));
     let queue = Arc::new(Mutex::new(VecDeque::with_capacity(ms(200))));
     let mut feed = Feed::new(queue.clone(), last_packet_ms.clone());
     let period = s.rate as usize / 100;
-    let ahead = (2 * period) as u32;
+    let ahead = (3 * period) as u32;
     let window = ms(1000);
     let mut played = 0usize;
-    let mut primed = false; // the first write fills the device to two periods; until then nothing is written
+    let mut primed = false; // the first write fills the device to three periods; until then nothing is written
     // The least the device was short at a write this second. One short write is the mic's packet
     // landing just after the cable's wake (two 10 ms clocks passing through phase), which the next
     // wake makes up with two packets; only a device short at every write has a slower mic clock.
@@ -321,13 +324,15 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
         }
         if primed && padding == 0 {
             ran_dry += 1;
+        } else if !primed {
+            (skipped, ran_dry) = (0, 0); // the first packet always says "discontinuity": nothing came before it
         }
         primed = true;
         let space = (s.out_size - padding).min(ahead.saturating_sub(padding)).min(ready);
         if space == 0 {
             continue;
         }
-        let short = ahead.saturating_sub(padding + space) as usize; // how far below two periods the device is left
+        let short = ahead.saturating_sub(padding + space) as usize; // how far below three periods the device is left
         least_short = least_short.min(short);
         let buffer = match s.writer.GetBuffer(space) {
             Ok(b) => b,
@@ -341,12 +346,12 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
         if second_over {
             played = 0;
             if least_short * s.out_ch > tuning.slack {
-                log::info!("mic: the cable stayed {} ms short of two periods all second: stretching the mic over it", least_short * 1000 / s.rate as usize);
+                log::info!("mic: the cable stayed {} ms short of three periods all second: stretching the mic over it", least_short * 1000 / s.rate as usize);
                 feed.hold_back(least_short);
             }
             least_short = usize::MAX;
             if skipped > 0 || ran_dry > 0 {
-                log::warn!("mic: in the last second the microphone skipped {skipped} packet(s) and the cable ran dry {ran_dry} time(s): that is a gap in the voice");
+                log::warn!("mic: in the last second the microphone skipped {skipped} packet(s) and the cable had nothing in hand at {ran_dry} wake(s): a late wake there is a gap in the voice");
                 (skipped, ran_dry) = (0, 0);
             }
         }

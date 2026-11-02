@@ -298,3 +298,17 @@ and went on waiting on the cable's event with no input: no log line, Discord hea
 the mic was switched off and on. Now a capture error ends the session with "mic session died",
 and the app's two-second retry brings the mic back once the headset is. This is also the answer
 to the open "audio session died 0x88890004" item: the base station leaves USB for a moment.
+
+## First minutes of the counters: the cable kept two periods was one miss from empty (2026-11-02)
+
+The build with the counters went on at 20:57. Within six minutes: "the cable ran dry N time(s)"
+nearly every second (N = 1), and twice a two-second burst of 37, 100, 89, 100 while the installer
+was still busy. What "ran dry" measured was a wake that found the cable's buffer empty, which with
+two periods in hand is what one missed mic packet leaves at the next wake (the two 10 ms clocks
+passing through phase; the next wake refills it). That is not a gap by itself: the engine took the
+last period at the wake and the next one is written microseconds later. But after a late wake the
+cable sat at one period for the two seconds the 0.5 % stretch took to pay the missing period back,
+and every one of those 200 wakes was a gap if it came late. Now the cable is kept three periods
+ahead: a miss leaves one period in hand, a stall's aftermath two. Mic latency 105 -> 115 ms. The
+warning now says what it means ("had nothing in hand at N wakes"), and the first packet's
+discontinuity flag, which every stream carries, is no longer counted.
