@@ -287,3 +287,14 @@ burst the voice wobbled 9 cents up and down continuously. Now the decision uses 
 seen over the whole second: one empty wake no longer counts, a device short at every write (a
 really slower mic clock) still does. The "late wireless packet" reading of 2026-10-26 and 10-28
 above was wrong; this is what the lines were.
+
+## The mic dies silently when the headset drops off USB (2026-11-01)
+
+Seen in the log at 20:45:26: "headset: Arctis Nova Pro Wireless went away (The device is not
+connected)", the output session died with 0x88890004 (device invalidated) and the engine moved to
+the monitor and back within seven seconds. The mic path reads the same base station; its capture
+client was invalidated too, but `run` swallowed the error (`Err(_) => break` out of the drain loop)
+and went on waiting on the cable's event with no input: no log line, Discord hearing silence until
+the mic was switched off and on. Now a capture error ends the session with "mic session died",
+and the app's two-second retry brings the mic back once the headset is. This is also the answer
+to the open "audio session died 0x88890004" item: the base station leaves USB for a moment.

@@ -239,7 +239,10 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
     // Evidence for a voice that sounds wrong, once a second: packets the mic reported losing, and
     // wakes that found the cable's buffer empty (it played silence to Discord until this write).
     let (mut skipped, mut ran_dry) = (0u32, 0u32);
-    let result = loop {
+    // A capture error is the microphone gone: the headset's base station dropping off USB for a
+    // moment does it (2026-11-01). The session ends and the app starts it again every two seconds
+    // until the mic is back; swallowed, Discord would hear silence until the user toggled the mic.
+    let result = 'session: loop {
         if stop.load(Relaxed) {
             break Ok(());
         }
@@ -251,14 +254,14 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
         loop {
             let next = match s.reader.GetNextPacketSize() {
                 Ok(n) => n,
-                Err(_) => break,
+                Err(e) => break 'session Err(format!("mic: {e}")),
             };
             if next == 0 {
                 break;
             }
             let (mut data, mut got, mut flags) = (std::ptr::null_mut::<u8>(), 0u32, 0u32);
-            if s.reader.GetBuffer(&mut data, &mut got, &mut flags, None, None).is_err() {
-                break;
+            if let Err(e) = s.reader.GetBuffer(&mut data, &mut got, &mut flags, None, None) {
+                break 'session Err(format!("mic: {e}"));
             }
             let silent = flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0;
             if flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY.0 as u32 != 0 {
@@ -266,8 +269,8 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
             }
             let samples = std::slice::from_raw_parts(data as *const f32, got as usize * s.in_ch);
             pending.extend(samples.chunks_exact(s.in_ch).map(|f| if silent { 0.0 } else { f[0] }));
-            if s.reader.ReleaseBuffer(got).is_err() {
-                break;
+            if let Err(e) = s.reader.ReleaseBuffer(got) {
+                break 'session Err(format!("mic: {e}"));
             }
         }
         // Whole frames through RNNoise (it counts in 16-bit units), the strength's share of the raw
