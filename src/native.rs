@@ -9,7 +9,7 @@
 
 use crate::engine::{AudioBackend, ChannelDsp, DeviceInfo, Dsp, Mix};
 use crate::eq::{limit, Eq};
-use crate::wasapi::{join_pro_audio, Feed, Tuning, CUSHION_MS, SETTLED_AFTER_MS, SILENT_AFTER_MS};
+use crate::wasapi::{join_pro_audio, Cushion, Feed, Tuning, CUSHION_MS, SETTLED_AFTER_MS, SILENT_AFTER_MS};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
@@ -275,6 +275,7 @@ unsafe fn run(mut s: Running, dsp: &Arc<Dsp>, stop: &AtomicBool) -> Result<(), S
     let ahead = (2 * period) as u32;
     let mut stats = (u32::MAX, 0u32, 0u64, 0u32); // padding at wake: min, max, sum, count, over the first seconds
     let (mut last_wake, mut late) = (Instant::now(), (0u32, 0f64)); // late wakes this second: how many, the worst
+    let (mut cushion, mut dry) = (Cushion::new(s.tuning.per_ms), 0u32); // the cushion follows how often playback ran dry
     let result = loop {
         if stop.load(Relaxed) {
             break Ok(());
@@ -315,10 +316,12 @@ unsafe fn run(mut s: Running, dsp: &Arc<Dsp>, stop: &AtomicBool) -> Result<(), S
         played += data.len();
         let second_over = played >= window;
         for c in s.captures.iter_mut() {
-            c.feed.mix_into(data, now_ms, second_over, &s.tuning);
+            dry += c.feed.mix_into(data, now_ms, second_over, &s.tuning);
         }
         if second_over {
             played = 0;
+            s.tuning.cushion = cushion.after_second(dry);
+            dry = 0;
             // The device plays out what it holds while it waits for us: a wake this late is a hole in the sound,
             // whoever held it up (a stalled USB controller, a PC too busy to run this thread).
             if late.0 > 0 {

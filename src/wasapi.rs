@@ -16,6 +16,46 @@ use std::time::Instant;
 /// at 8 ms every one of those wakes was a 2 ms hole, a click a few times an hour (2026-10-02).
 /// ponytail: assumes the 10 ms period every endpoint here has; derive it from the device if one differs.
 pub(crate) const CUSHION_MS: usize = 12;
+/// A second in which playback ran dry (a capture packet later than the whole cushion: the PC was
+/// busy) deepens the cushion by one step, up to the ceiling; every quiet minute takes a step back
+/// off. A loaded PC buys itself a little latency only while it is loaded. The log of 2026-10-26 to
+/// 11-02 had 5-10 such seconds a day while gaming, nearly all 10-30 ms late, which the ceiling covers.
+pub(crate) const CUSHION_STEP_MS: usize = 10;
+pub(crate) const CUSHION_MAX_MS: usize = CUSHION_MS + 20;
+const CUSHION_RELAX_SECONDS: u32 = 60;
+
+/// The cushion's depth over time; see `CUSHION_STEP_MS`.
+pub(crate) struct Cushion {
+    per_ms: usize,
+    depth: usize,
+    quiet_seconds: u32,
+}
+
+impl Cushion {
+    pub(crate) fn new(per_ms: usize) -> Cushion {
+        Cushion { per_ms, depth: CUSHION_MS * per_ms, quiet_seconds: 0 }
+    }
+
+    /// Once a second, with how many times playback ran dry: the depth to use from now on.
+    pub(crate) fn after_second(&mut self, dry: u32) -> usize {
+        let (step, max, base) = (CUSHION_STEP_MS * self.per_ms, CUSHION_MAX_MS * self.per_ms, CUSHION_MS * self.per_ms);
+        let was = self.depth;
+        if dry > 0 {
+            self.quiet_seconds = 0;
+            self.depth = (self.depth + step).min(max);
+        } else if self.depth > base {
+            self.quiet_seconds += 1;
+            if self.quiet_seconds >= CUSHION_RELAX_SECONDS {
+                self.quiet_seconds = 0;
+                self.depth = self.depth.saturating_sub(step).max(base);
+            }
+        }
+        if self.depth != was {
+            log::info!("cushion {} -> {} ms: {}", was / self.per_ms, self.depth / self.per_ms, if dry > 0 { "playback ran dry" } else { "a quiet minute" });
+        }
+        self.depth
+    }
+}
 /// Loopback capture delivers nothing while a device is silent. A channel whose last packet is
 /// older than this isn't running dry, it just has nothing to say.
 pub(crate) const SILENT_AFTER_MS: u64 = 50;
@@ -141,7 +181,10 @@ impl Feed {
     /// slow. Over each second, the smallest leftover seen is delay nobody needed: keep a cushion
     /// against scheduling jitter and ease the rest out (see `EASE`). And when less than the
     /// cushion is left, ease it back in.
-    pub(crate) fn mix_into(&mut self, data: &mut [f32], now_ms: u64, second_over: bool, t: &Tuning) {
+    ///
+    /// Returns how many callbacks ran dry in the second that `second_over` closes, 0 otherwise.
+    pub(crate) fn mix_into(&mut self, data: &mut [f32], now_ms: u64, second_over: bool, t: &Tuning) -> u32 {
+        let mut ran_dry = 0;
         let mut q = self.queue.lock().unwrap();
         let talking = now_ms.saturating_sub(self.last_packet_ms.load(Relaxed)) < SILENT_AFTER_MS;
         self.talking_since_ms = if talking { self.talking_since_ms.or(Some(now_ms)) } else { None };
@@ -166,6 +209,7 @@ impl Feed {
             // Running out because the sound ended is not a glitch: only a channel that is still going counts.
             if self.dry > 0 && talking {
                 log::warn!("playback ran dry {} times in the last second", self.dry);
+                ran_dry = self.dry;
             }
             (self.least_left, self.dry) = (usize::MAX, 0);
         }
@@ -174,7 +218,7 @@ impl Feed {
         } else if !self.primed {
             let start_with = data.len() + t.cushion;
             if q.len() < start_with {
-                return; // nothing of the sound is lost: it begins a few milliseconds later
+                return ran_dry; // nothing of the sound is lost: it begins a few milliseconds later
             }
             self.primed = true;
             self.pos = 0.0;
@@ -204,6 +248,7 @@ impl Feed {
         let used = (self.pos as usize).min(frames);
         q.drain(..used * t.frame);
         self.pos -= used as f64;
+        ran_dry
     }
 }
 
@@ -471,6 +516,36 @@ mod tests {
     /// then arrives late is played, not cut: cutting it would run the queue dry again on the next
     /// late packet, and that loop was a crackle once a second on a game night (2026-09-22). The
     /// delay it leaves behind eases out on its own once the next second shows it wasn't needed.
+    #[test]
+    fn a_dry_second_deepens_the_cushion_and_quiet_minutes_take_it_back() {
+        let mut cushion = Cushion::new(48);
+        assert_eq!(cushion.after_second(0), 48 * CUSHION_MS);
+        assert_eq!(cushion.after_second(2), 48 * (CUSHION_MS + CUSHION_STEP_MS), "one step per dry second");
+        assert_eq!(cushion.after_second(1), 48 * CUSHION_MAX_MS);
+        assert_eq!(cushion.after_second(5), 48 * CUSHION_MAX_MS, "never past the ceiling");
+        for _ in 0..59 {
+            assert_eq!(cushion.after_second(0), 48 * CUSHION_MAX_MS, "a quiet second alone changes nothing");
+        }
+        assert_eq!(cushion.after_second(0), 48 * (CUSHION_MAX_MS - CUSHION_STEP_MS), "a quiet minute takes one step back");
+        for _ in 0..120 {
+            cushion.after_second(0);
+        }
+        assert_eq!(cushion.after_second(0), 48 * CUSHION_MS, "and never below the base");
+        // The feed builds a deeper cushion the way it rebuilds a used-up one: by reading slower for a while.
+        let mut rig = Rig::new();
+        rig.capture(3);
+        for _ in 0..200 {
+            rig.capture(1);
+            rig.play();
+        }
+        rig.tuning.cushion = 48 * (CUSHION_MS + CUSHION_STEP_MS);
+        for _ in 0..400 {
+            rig.capture(1);
+            rig.play();
+        }
+        assert_eq!(rig.delay_ms(), CUSHION_MS + CUSHION_STEP_MS, "four seconds later the feed runs at the deeper cushion");
+    }
+
     #[test]
     fn a_capture_stall_is_one_gap_and_the_delay_eases_out() {
         let mut rig = Rig::new();
