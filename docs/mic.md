@@ -312,3 +312,12 @@ and every one of those 200 wakes was a gap if it came late. Now the cable is kep
 ahead: a miss leaves one period in hand, a stall's aftermath two. Mic latency 105 -> 115 ms. The
 warning now says what it means ("had nothing in hand at N wakes"), and the first packet's
 discontinuity flag, which every stream carries, is no longer counted.
+
+## Three periods did not fit (2026-11-03)
+
+The three-period build logged "the cable stayed 8 ms short of three periods all second" every
+second from start. VB-CABLE's default shared buffer is 1056 frames (22 ms): 30 ms never fits, so
+the feed was stretched every second for nothing. The cable is now opened with a 40 ms buffer
+(it gives 1920 frames when asked), and `ahead` is capped at the buffer size so a cable that
+refuses can never cause an endless stretch. The start line now says how much cable room it got.
+Meanwhile the "nothing in hand" warnings fell from ~200 per 10 minutes to 5 in half an hour.

@@ -29,6 +29,7 @@ const RNNOISE_DELAY: usize = 480;
 /// "Hear yourself" plays the cleaned-up voice on the user's own output. Its buffer is kept this
 /// far ahead (three 10 ms periods); more than this much voice waiting for it is dropped.
 const MONITOR_BUFFER_HNS: i64 = 1_000_000;
+const CABLE_BUFFER_HNS: i64 = 400_000;
 const MONITOR_AHEAD: u32 = 3 * 480;
 const MONITOR_DROP: usize = 5 * 480;
 
@@ -176,7 +177,8 @@ unsafe fn open(from: &str, into: &str, monitor: Option<&str>) -> Result<Running,
     let flags = if flow == eRender { AUDCLNT_STREAMFLAGS_LOOPBACK } else { 0 };
     capture.Initialize(AUDCLNT_SHAREMODE_SHARED, flags, CAPTURE_BUFFER_HNS, 0, in_format, None).map_err(|e| format!("mic: {e}"))?;
     let reader: IAudioCaptureClient = capture.GetService().map_err(|e| e.to_string())?;
-    render.Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 0, 0, out_format, None).map_err(|e| format!("cable: {e}"))?;
+    // 40 ms of room: the default (22 ms on VB-CABLE) cannot hold the three periods `run` keeps ahead.
+    render.Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, CABLE_BUFFER_HNS, 0, out_format, None).map_err(|e| format!("cable: {e}"))?;
     let event = CreateEventW(None, false, false, PCWSTR::null()).map_err(|e| e.to_string())?;
     render.SetEventHandle(event).map_err(|e| e.to_string())?;
     let writer: IAudioRenderClient = render.GetService().map_err(|e| e.to_string())?;
@@ -191,7 +193,7 @@ unsafe fn open(from: &str, into: &str, monitor: Option<&str>) -> Result<Running,
     });
     capture.Start().map_err(|e| e.to_string())?;
     render.Start().map_err(|e| e.to_string())?;
-    log::info!("mic: {} ch at {} Hz -> cable {} ch, {} ms of mic room{}", input.channels, input.rate, output.channels, capture.GetBufferSize().map_or(0, |f| f * 1000 / input.rate), if monitor.is_some() { ", played back" } else { "" });
+    log::info!("mic: {} ch at {} Hz -> cable {} ch, {} ms of mic room, {} ms of cable room{}", input.channels, input.rate, output.channels, capture.GetBufferSize().map_or(0, |f| f * 1000 / input.rate), out_size * 1000 / output.rate, if monitor.is_some() { ", played back" } else { "" });
     Ok(Running { capture, reader, in_ch: input.channels, render, writer, event, out_size, out_ch: output.channels, rate: output.rate, monitor })
 }
 
@@ -224,7 +226,7 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
     let queue = Arc::new(Mutex::new(VecDeque::with_capacity(ms(200))));
     let mut feed = Feed::new(queue.clone(), last_packet_ms.clone());
     let period = s.rate as usize / 100;
-    let ahead = (3 * period) as u32;
+    let ahead = ((3 * period) as u32).min(s.out_size); // a cable that refused the bigger buffer is kept as full as it goes, not stretched for ever
     let window = ms(1000);
     let mut played = 0usize;
     let mut primed = false; // the first write fills the device to three periods; until then nothing is written
