@@ -321,3 +321,13 @@ the feed was stretched every second for nothing. The cable is now opened with a 
 (it gives 1920 frames when asked), and `ahead` is capped at the buffer size so a cable that
 refuses can never cause an endless stretch. The start line now says how much cable room it got.
 Meanwhile the "nothing in hand" warnings fell from ~200 per 10 minutes to 5 in half an hour.
+
+## The mic was silent for days after the headset was re-detected (2026-11-12)
+
+From at least 2026-11-09 the log held one line every two seconds: `mic: 0x88890004`. The Arctis
+had come back from a USB re-detection as "8- Arctis Nova Pro Wireless" with new endpoint ids;
+the saved mic was the "7-" one, which Windows keeps listed as unplugged, so every retry failed
+and "FreeSeries Mic" carried silence (the A/B recording of 11-12 was 10 s of digital zero). The
+outputs had the same hole: `adoptRenamed` matched names exactly. Now `sameDevice` ignores
+Windows' "N- " counter, outputs adopt through it, the mic stores the name it was picked under
+and follows it to the new id, and a mic error re-lists the mics so that happens without a restart.

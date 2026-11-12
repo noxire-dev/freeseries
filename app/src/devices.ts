@@ -52,16 +52,19 @@ export function virtualChannels(devices: Device[]): VirtualChannel[] {
  * not saved yet, is that device under a new id: an HDMI or DisplayPort monitor gets a fresh endpoint
  * every time the GPU re-detects it. Returns the same array when nothing moved.
  */
+/** The same device under Windows' re-detection counter: "Microphone (7- Arctis ...)" and "Microphone (8- Arctis ...)". */
+export const sameDevice = (a: string, b: string): boolean => a.replace(/\(\d+- /, "(") === b.replace(/\(\d+- /, "(");
+
 export function adoptRenamed<T extends { id: string; name: string }>(outputs: T[], devices: Device[]): T[] {
   const saved = new Set(outputs.map((o) => o.id));
   let moved = false;
   const next = outputs.map((o) => {
     if (saved.has(o.id) && devices.some((d) => d.id === o.id)) return o;
-    const same = devices.find((d) => d.name === o.name && !saved.has(d.id) && !isVirtualDevice(d));
+    const same = devices.find((d) => sameDevice(d.name, o.name) && !saved.has(d.id) && !isVirtualDevice(d));
     if (!same) return o;
     moved = true;
     saved.add(same.id);
-    return { ...o, id: same.id };
+    return { ...o, id: same.id, name: same.name };
   });
   return moved ? next : outputs;
 }

@@ -2,7 +2,7 @@
 import { bandGainDb, combine, formatPreset, totalGainDb } from "./eqmath.ts";
 import { FLAT, migrate } from "./store.ts";
 import { trayMenu, trayPick } from "./tray.ts";
-import { adoptRenamed } from "./devices.ts";
+import { adoptRenamed, sameDevice } from "./devices.ts";
 
 const near = (actual: number, expected: number, what: string) => {
   if (Math.abs(actual - expected) >= 0.1) throw new Error(`${what}: got ${actual.toFixed(2)}, expected ${expected}`);
@@ -111,4 +111,9 @@ const adopted = adoptRenamed(savedOutputs, listed);
 if (adopted[0].id !== "wasapi:{new}" || adopted[0].correction?.name !== "x" || adopted[1].id !== "wasapi:{a}") throw new Error(`adoption: ${JSON.stringify(adopted)}`);
 if (adoptRenamed(adopted, listed) !== adopted) throw new Error("nothing moved should return the same array");
 if (adoptRenamed([{ id: "wasapi:{gone}", name: "Headphones (Arctis)" }, savedOutputs[1]], listed)[0].id !== "wasapi:{gone}") throw new Error("a saved device must not be stolen by another entry");
+// Windows' re-detection counter ("7-" -> "8-") is the same device; a different device is not.
+if (!sameDevice("Microphone (7- Arctis Nova Pro Wireless)", "Microphone (8- Arctis Nova Pro Wireless)") || !sameDevice("Microphone (Arctis Nova Pro Wireless)", "Microphone (2- Arctis Nova Pro Wireless)")) throw new Error("counter should not matter");
+if (sameDevice("Microphone (8- Arctis Nova Pro Wireless)", "Headphones (8- Arctis Nova Pro Wireless)")) throw new Error("mic is not headphones");
+const counted = adoptRenamed([{ id: "wasapi:{7}", name: "Headphones (7- Arctis Nova Pro Wireless)" }], [{ id: "wasapi:{8}", name: "Headphones (8- Arctis Nova Pro Wireless)", channels: 2, sampleRate: 48000 }]);
+if (counted[0].id !== "wasapi:{8}" || counted[0].name !== "Headphones (8- Arctis Nova Pro Wireless)") throw new Error(`counter adoption: ${JSON.stringify(counted)}`);
 console.log("devices ok");

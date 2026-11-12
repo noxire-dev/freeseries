@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentApi, HeadsetApi, HeadsetFeatures, HeadsetState, AppsApi, AutoEqApi, Device, EngineApi, HotkeyApi, InfoApi, LogApi, LogEntry, MicApi, MicSnapshot, Preset, SetupApi, StartupApi, Status, TrayApi, WindowApi } from "./api";
 import { trayMenu, trayPick } from "./tray";
-import { adoptRenamed, findVirtualDevice, isCable, isCableInput, isCableUnnamed, shortName, virtualChannels } from "./devices";
+import { adoptRenamed, findVirtualDevice, sameDevice, isCable, isCableInput, isCableUnnamed, shortName, virtualChannels } from "./devices";
 import { BUILTIN } from "./builtin";
 import { createAgent } from "./agent";
 import { useScreen } from "./screen";
@@ -132,6 +132,22 @@ export default function App(p: {
     const route = mic.on && mic.device && cable ? { from: mic.device, into: cable.id, monitor } : null;
     p.mic.setMic(route).catch((e) => setMicStatus({ running: false, error: String(e) }));
   }, [p.mic, mic.on, mic.device, cable?.id, monitor]);
+  // The headset re-detected over USB comes back as a new mic ("8-" for "7-"); the old id stays
+  // listed by Windows as unplugged and fails to open for ever. Follow it by name, and re-list the
+  // mics whenever the path reports an error so that happens without a restart.
+  useEffect(() => {
+    const listed = mics.find((d) => d.id === mic.device);
+    if (listed) {
+      if (listed.name !== mic.deviceName) setMicSettings((m) => ({ ...m, deviceName: listed.name }));
+      return;
+    }
+    const was = mic.deviceName;
+    const same = mic.device && was ? mics.find((d) => !isCable(d) && sameDevice(d.name, was)) : undefined;
+    if (same) setMicSettings((m) => ({ ...m, device: same.id, deviceName: same.name }));
+  }, [mics]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (micStatus.error) p.mic.listMics().then(setMics, () => {});
+  }, [p.mic, micStatus.error]);
   useEffect(() => void p.mic.setStrength(mic.strength).catch(() => {}), [p.mic, mic.strength]);
   useEffect(() => void p.mic.setEq(mic.eq).catch(() => {}), [p.mic, mic.eq]);
   useEffect(() => {

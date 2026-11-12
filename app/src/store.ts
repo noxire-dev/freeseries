@@ -16,6 +16,8 @@ export interface SavedOutput {
 /** The microphone path: which mic, whether it runs, and whether its background noise is removed. */
 export interface SavedMic {
   device: string | null;
+  /** The mic's name when it was last listed, so a re-detected headset (new id, "8-" for "7-") is found again. */
+  deviceName?: string;
   on: boolean;
   /** How much background noise is removed, 0 to 1. */
   strength: number;
