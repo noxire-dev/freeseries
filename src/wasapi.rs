@@ -168,10 +168,10 @@ impl Feed {
         if self.ease.abs() > (EASE_FAST_ABOVE_MS * t.per_ms / t.frame) as f64 { EASE_FAST } else { EASE }
     }
 
-    /// Read `frames` fewer over the coming second: the device buffer has run down (the source's
-    /// clock is slower than the output's) and this stretches the queue over the difference.
-    pub(crate) fn hold_back(&mut self, frames: usize) {
-        self.ease = -(frames as f64) - self.pos.fract();
+    /// Read `frames` more (negative: fewer) than it plays, from now on, at the usual easing rate.
+    /// For a caller that measures the delay itself (the mic path) and passes `second_over: false`.
+    pub(crate) fn ease_by(&mut self, frames: isize) {
+        self.ease = frames as f64 - self.pos.fract();
     }
 
     /// Adds this channel's share to `data`. `second_over`: the once-a-second look at the leftovers is due.

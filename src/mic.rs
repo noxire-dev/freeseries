@@ -230,10 +230,11 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
     let window = ms(1000);
     let mut played = 0usize;
     let mut primed = false; // the first write fills the device to three periods; until then nothing is written
-    // The least the device was short at a write this second. One short write is the mic's packet
-    // landing just after the cable's wake (two 10 ms clocks passing through phase), which the next
-    // wake makes up with two packets; only a device short at every write has a slower mic clock.
-    let mut least_short = usize::MAX;
+    // The least voice in hand after a write this second: the cable's buffer plus what waits in the
+    // queue. One number, because a packet landing just after the cable's wake moves voice from the
+    // one to the other without changing the sum (2026-11-13: the feed eased that "excess" out of the
+    // queue on its own, the cable came up 10 ms short, the mic was stretched back, every 10-30 s).
+    let mut least_lead = usize::MAX;
     let mut pending: Vec<f32> = Vec::with_capacity(FRAME * 4); // mono, waiting for a whole RNNoise frame
     let mut denoiser = DenoiseState::new();
     let mut clean = [0f32; FRAME];
@@ -334,8 +335,6 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
         if space == 0 {
             continue;
         }
-        let short = ahead.saturating_sub(padding + space) as usize; // how far below three periods the device is left
-        least_short = least_short.min(short);
         let buffer = match s.writer.GetBuffer(space) {
             Ok(b) => b,
             Err(e) => break Err(format!("cable: {e}")),
@@ -344,14 +343,25 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
         data.fill(0.0);
         played += data.len();
         let second_over = played >= window;
-        feed.mix_into(data, now_ms, second_over, &tuning);
+        feed.mix_into(data, now_ms, false, &tuning); // the lead is steered here, not by the feed's own look at its queue
+        let left = queue.lock().unwrap().len() / s.out_ch;
+        least_lead = least_lead.min((padding + space) as usize + left);
         if second_over {
             played = 0;
-            if least_short * s.out_ch > tuning.slack {
-                log::info!("mic: the cable stayed {} ms short of three periods all second: stretching the mic over it", least_short * 1000 / s.rate as usize);
-                feed.hold_back(least_short);
+            match steer(least_lead, ahead as usize, tuning.slack / s.out_ch, period) {
+                Steer::Stretch(n) => {
+                    log::info!("mic: {} ms short of three periods all second: stretching the mic over it", n * 1000 / s.rate as usize);
+                    feed.ease_by(-(n as isize));
+                }
+                Steer::Ease(n) => feed.ease_by(n as isize),
+                Steer::Cut(n) => {
+                    let n = n.min(left);
+                    queue.lock().unwrap().drain(..n * s.out_ch);
+                    log::info!("mic: dropped {} ms of voice that piled up behind a stall", n * 1000 / s.rate as usize);
+                }
+                Steer::Hold => {}
             }
-            least_short = usize::MAX;
+            least_lead = usize::MAX;
             if skipped > 0 || ran_dry > 0 {
                 log::warn!("mic: in the last second the microphone skipped {skipped} packet(s) and the cable had nothing in hand at {ran_dry} wake(s): a late wake there is a gap in the voice");
                 (skipped, ran_dry) = (0, 0);
@@ -394,9 +404,44 @@ unsafe fn play_back(m: &Monitor, voice: &mut Vec<f32>) {
     }
 }
 
+#[derive(Debug, PartialEq)]
+enum Steer {
+    Hold,
+    /// The lead fell short all second (mic clock slower, or a stall): read this many frames fewer.
+    Stretch(usize),
+    /// A little extra lead all second: read this many more.
+    Ease(usize),
+    /// A backlog after a stall: easing it out at 2 % would speed the voice up for seconds. Cut it;
+    /// there was a gap there anyway.
+    Cut(usize),
+}
+
+/// What to do with the least lead (cable buffer plus queue, frames) seen over a second.
+fn steer(least_lead: usize, ahead: usize, slack: usize, period: usize) -> Steer {
+    if least_lead + slack < ahead {
+        Steer::Stretch(ahead - least_lead)
+    } else if least_lead > ahead + 3 * period {
+        Steer::Cut(least_lead - ahead)
+    } else if least_lead > ahead + slack {
+        Steer::Ease(least_lead - ahead)
+    } else {
+        Steer::Hold
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_lead_is_steered_from_one_number() {
+        let (ahead, slack, period) = (1440, 96, 480);
+        assert_eq!(steer(1440, ahead, slack, period), Steer::Hold);
+        assert_eq!(steer(1400, ahead, slack, period), Steer::Hold, "inside the slack");
+        assert_eq!(steer(960, ahead, slack, period), Steer::Stretch(480), "a period short all second");
+        assert_eq!(steer(1920, ahead, slack, period), Steer::Ease(480), "a period extra all second");
+        assert_eq!(steer(1440 + 10_000, ahead, slack, period), Steer::Cut(10_000), "a backlog is cut, not played 2 % fast for seconds");
+    }
 
     /// RNNoise's output lags its input by a fixed number of samples. The strength mix adds the dry
     /// voice back in, delayed by exactly that, or it would comb-filter against the cleaned one.

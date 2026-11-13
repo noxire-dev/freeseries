@@ -331,3 +331,16 @@ and "FreeSeries Mic" carried silence (the A/B recording of 11-12 was 10 s of dig
 outputs had the same hole: `adoptRenamed` matched names exactly. Now `sameDevice` ignores
 Windows' "N- " counter, outputs adopt through it, the mic stores the name it was picked under
 and follows it to the new id, and a mic error re-lists the mics so that happens without a restart.
+
+## Two controllers fighting over one lead (2026-11-13)
+
+"The mic is kinda weird sometimes." Two things in the log since 11-12. About 270 one-second
+blackouts (the cable had nothing at ~100 wakes): the headset itself, its packets stopped,
+the headphones stumbled at the same moments, the base station dropped off USB twice. Not ours.
+And ~800 "10 ms short: stretching" lines in pairs every 10-30 s, which were ours: `micjitter`
+read the Arctis for 3 minutes (18000 packets, none late, none lost) while the app logged six of
+them. The feed's own once-a-second look eased out a packet sitting in its queue as "delay",
+but that packet was the cable's lead in transit; the cable then came up 10 ms short and the
+mic path stretched it back. Faster, slower, over and over. Now the mic path steers one number,
+the cable buffer plus the queue after each write (`steer`): short all second stretches, a bit
+over eases, a backlog behind a stall is cut instead of played 2 % fast for seconds.
