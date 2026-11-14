@@ -229,7 +229,8 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
     let ahead = ((3 * period) as u32).min(s.out_size); // a cable that refused the bigger buffer is kept as full as it goes, not stretched for ever
     let window = ms(1000);
     let mut played = 0usize;
-    let mut primed = false; // the first write fills the device to three periods; until then nothing is written
+    let mut primed = false; // a write fills the device to three periods; until then nothing is written
+    let mut ever_primed = false;
     // The least voice in hand after a write this second: the cable's buffer plus what waits in the
     // queue. One number, because a packet landing just after the cable's wake moves voice from the
     // one to the other without changing the sum (2026-11-13: the feed eased that "excess" out of the
@@ -321,16 +322,22 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
             Ok(p) => p,
             Err(e) => break Err(format!("cable: {e}")),
         };
+        // Run dry: the mic held its packets back (the headset does, for ~280 ms, 2026-11-14). Writing
+        // each packet as it comes leaves the cable with nothing in hand at every wake until the stretch
+        // has paid three periods back, a second of broken voice after every hole. So the cable is
+        // primed again instead: 30 ms more silence, then clean voice with the lead back.
+        if primed && padding == 0 {
+            ran_dry += 1;
+            primed = false;
+        }
         let ready = feed.ready(&tuning) as u32;
         if !primed && ready < ahead {
             continue;
         }
-        if primed && padding == 0 {
-            ran_dry += 1;
-        } else if !primed {
+        if !primed && !ever_primed {
             (skipped, ran_dry) = (0, 0); // the first packet always says "discontinuity": nothing came before it
         }
-        primed = true;
+        (primed, ever_primed) = (true, true);
         let space = (s.out_size - padding).min(ahead.saturating_sub(padding)).min(ready);
         if space == 0 {
             continue;

@@ -344,3 +344,12 @@ but that packet was the cable's lead in transit; the cable then came up 10 ms sh
 mic path stretched it back. Faster, slower, over and over. Now the mic path steers one number,
 the cable buffer plus the queue after each write (`steer`): short all second stretches, a bit
 over eases, a backlog behind a stall is cut instead of played 2 % fast for seconds.
+
+## Holes turned into a second of broken voice (2026-11-14)
+
+Friends heard the voice cut during calls, not with the headset mic used directly. A separate
+recorder on the raw mic saw the headset hold its packets back for ~280 ms at the same instants
+FreeSeries logged 50-117 dry wakes. The hole is the headset's; Discord papers over it. Ours was
+the second after it: each packet was written as it came, so the cable had nothing in hand at every
+wake until the stretch paid three periods back. Now a dry cable is primed again: 30 ms more silence,
+then clean voice with the lead back.
