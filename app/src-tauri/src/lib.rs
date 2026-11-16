@@ -95,7 +95,7 @@ struct Snapshot {
     bypass: bool,
 }
 
-#[tauri::command]
+#[tauri::command(async)] // off the UI thread: listing activates every endpoint, which blocks while a USB device drops off
 fn list_outputs() -> Result<Vec<DeviceInfo>, String> {
     Native.outputs()
 }
@@ -354,7 +354,7 @@ fn mic_apply(mic: &std::sync::Arc<MicShared>, generation: u64) {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_mics() -> Result<Vec<DeviceInfo>, String> {
     freeseries::mic::mics()
 }

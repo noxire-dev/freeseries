@@ -195,7 +195,7 @@ export default function App(p: {
   // Off the first output, or the mic failing: Windows may have re-detected the device under a new
   // id, which only a fresh list shows. Looked for every 5 s until it is back, not only on a change
   // of error (2026-11-16 council: the first error came before the new id was listed, then none).
-  const searching = (running && !!ordered[0] && activeNow !== ordered[0].id) || !!micStatus.error;
+  const searching = (running && !!ordered[0] && activeNow !== ordered[0].id) || (mic.on && !!micStatus.error);
   useEffect(() => {
     if (!searching) return;
     const look = setInterval(() => {
