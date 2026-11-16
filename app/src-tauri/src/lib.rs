@@ -97,7 +97,7 @@ struct Snapshot {
 
 #[tauri::command]
 fn list_outputs() -> Result<Vec<DeviceInfo>, String> {
-    Wasapi.outputs()
+    Native.outputs()
 }
 
 #[tauri::command]

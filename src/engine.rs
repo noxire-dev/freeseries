@@ -272,7 +272,9 @@ impl Engine {
             let mut session: Option<(B::Session, String)> = None;
             // Both streams of a session usually die together; the generation lets the second
             // "lost" of an already-replaced session be ignored instead of killing the new one.
-            let mut generation = 0u64;
+            // A failed attempt takes a generation too, so the live session's own is kept apart:
+            // without it, a failed switch made the playing session's "lost" look stale.
+            let (mut generation, mut live) = (0u64, 0u64);
             loop {
                 let wait = match (&plan, &session) {
                     (None, _) => None,
@@ -325,7 +327,7 @@ impl Engine {
                         dsp.eq.set(preset);
                         continue;
                     }
-                    Some(Cmd::Lost(g)) if g == generation => session = None,
+                    Some(Cmd::Lost(g)) if g == live => session = None,
                     Some(Cmd::Lost(_)) => continue,
                     None => {}
                 }
@@ -356,6 +358,7 @@ impl Engine {
                             // Only now: a failed attempt must not touch the EQ of what is playing.
                             dsp.eq.set(output.preset.clone());
                             session = Some((s, output.id.clone()));
+                            live = g;
                             break;
                         }
                         Err(e) => error = e,
@@ -564,5 +567,12 @@ mod tests {
         fake.off.lock().unwrap().clear();
         std::thread::sleep(Duration::from_millis(80));
         assert_eq!(engine.status(), running("monitor"), "stays on the monitor while the headset won't open");
+
+        // The monitor's session dies after those failed attempts: that must still count.
+        fake.off.lock().unwrap().insert("headset".into());
+        fake.results.lock().unwrap().clear();
+        let before = fake.opened.lock().unwrap().len();
+        (fake.opened.lock().unwrap()[before - 1].1)();
+        wait_for("a new session after the loss", || fake.opened.lock().unwrap().len() > before);
     }
 }

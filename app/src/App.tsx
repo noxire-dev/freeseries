@@ -192,6 +192,18 @@ export default function App(p: {
   const latest = useRef({ planned, plannedChannels });
   latest.current = { planned, plannedChannels };
   const activeNow = status.state === "running" ? status.output : undefined;
+  // Off the first output, or the mic failing: Windows may have re-detected the device under a new
+  // id, which only a fresh list shows. Looked for every 5 s until it is back, not only on a change
+  // of error (2026-11-16 council: the first error came before the new id was listed, then none).
+  const searching = (running && !!ordered[0] && activeNow !== ordered[0].id) || !!micStatus.error;
+  useEffect(() => {
+    if (!searching) return;
+    const look = setInterval(() => {
+      engine.listOutputs().then(setDevices, () => {});
+      p.mic.listMics().then(setMics, () => {});
+    }, 5000);
+    return () => clearInterval(look);
+  }, [searching, engine, p.mic]);
   const idle = planned.filter((o) => o.id !== activeNow).map((o) => o.correction?.preset);
   const shape = running && plannedChannels.length && planned.length ? `${JSON.stringify(plannedChannels)}|${planned.map((o) => o.id).join("|")}|${JSON.stringify(idle)}` : null;
   useEffect(() => {
