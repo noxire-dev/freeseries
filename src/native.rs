@@ -140,6 +140,30 @@ struct Capture {
     woke_ms: u64,
     /// The device position the next packet starts at, if nothing is lost in between.
     next_position: u64,
+    /// Silence played into the channel's own device for as long as we capture it (see `keep_awake`).
+    awake: Option<(IAudioClient, IAudioRenderClient, u32)>,
+}
+
+/// A stream opening or closing on an idle FreeSeries device (a notification sound, a Discord call
+/// starting) stalled all of Windows audio for a moment: our loopback, the mic, the cable
+/// (2026-11-16: every system sound, cold, three of three; with a silent stream held open, none of
+/// three). So the device is never idle: we play silence into it while we capture it.
+unsafe fn keep_awake(from: &IMMDevice) -> Result<(IAudioClient, IAudioRenderClient, u32), String> {
+    let client: IAudioClient = from.Activate(CLSCTX_ALL, None).map_err(|e| e.to_string())?;
+    let (_, format) = format_of(&client)?;
+    client.Initialize(AUDCLNT_SHAREMODE_SHARED, 0, 1_000_000, 0, format, None).map_err(|e| e.to_string())?;
+    let writer: IAudioRenderClient = client.GetService().map_err(|e| e.to_string())?;
+    let size = client.GetBufferSize().map_err(|e| e.to_string())?;
+    client.Start().map_err(|e| e.to_string())?;
+    Ok((client, writer, size))
+}
+
+/// Tops the silent stream up; it holds 100 ms, and we come by every 10.
+unsafe fn top_up((client, writer, size): &(IAudioClient, IAudioRenderClient, u32)) {
+    let free = size - client.GetCurrentPadding().unwrap_or(*size);
+    if free > 0 && writer.GetBuffer(free).is_ok() {
+        let _ = writer.ReleaseBuffer(free, AUDCLNT_BUFFERFLAGS_SILENT.0 as u32);
+    }
 }
 
 struct Running {
@@ -180,7 +204,9 @@ unsafe fn start(mix: &Mix, dsp: &Arc<Dsp>) -> Result<Running, String> {
         let channel = dsp.channel(&source.channel);
         let last_packet_ms = Arc::new(AtomicU64::new(0));
         let queue = Arc::new(Mutex::new(VecDeque::with_capacity(ms(200))));
+        let awake = keep_awake(&from).map_err(|e| log::warn!("channel {}: not kept awake, a sound starting on it may stall audio: {e}", source.channel)).ok();
         captures.push(Capture {
+            awake,
             channel: source.channel.clone(),
             eq: Eq::new(&channel.eq.get(), rate as f64, out_ch),
             feed: Feed::new(queue, last_packet_ms.clone()),
@@ -288,6 +314,9 @@ unsafe fn run(mut s: Running, dsp: &Arc<Dsp>, stop: &AtomicBool) -> Result<(), S
         last_wake = Instant::now();
         if gap_ms > LATE_WAKE_MS {
             late = (late.0 + 1, late.1.max(gap_ms));
+        }
+        for a in s.captures.iter().filter_map(|c| c.awake.as_ref()) {
+            top_up(a);
         }
         if let Some(e) = s.captures.iter_mut().find_map(|c| drain(c, dsp, s.out_ch, now_ms, gap_ms, max_queued).err().map(|e| format!("{} capture: {e}", c.channel))) {
             break Err(e);
