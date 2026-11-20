@@ -1,0 +1,43 @@
+# Builds the Windows installer on every push to master and every v* tag, after the checks pass.
+# The installer is an artifact of the run; publishing a release stays a manual `gh release`.
+name: build
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            app/src-tauri -> target
+      - run: cargo test --release --lib
+      - run: npm ci
+        working-directory: app
+      - run: npm run check
+        working-directory: app
+      - run: cargo test --release --lib
+        working-directory: app/src-tauri
+      - run: npx tauri build --bundles nsis
+        working-directory: app
+      - name: Checksum
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem app/src-tauri/target/release/bundle/nsis/*-setup.exe
+          (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower() + "  " + $exe.Name | Out-File -Encoding ascii "$($exe.FullName).sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FreeSeries-installer
+          path: app/src-tauri/target/release/bundle/nsis/*-setup.exe*
