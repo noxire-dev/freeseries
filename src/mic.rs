@@ -79,6 +79,39 @@ impl Settings {
 }
 
 /// The mic stream ends when this is dropped.
+/// Turns the voice down further in the pauses, where RNNoise leaves a floor of residue and lets
+/// keyboard and mouse clicks through (its voice detector does not call them voice). Opens at once
+/// on voice, stays open `HOLD` after it so the gaps between words are left alone, then eases down.
+pub struct Gate {
+    gain: f32,
+    hold: usize,
+}
+
+impl Gate {
+    const OPEN_AT: f32 = 0.5; // RNNoise's voice probability
+    const HOLD: usize = 25; // frames: 250 ms
+    const DEPTH_DB: f32 = 15.0; // at full strength
+    const RELEASE: f32 = 0.9995; // per sample: about 60 ms to close
+
+    pub fn new() -> Gate {
+        Gate { gain: 1.0, hold: 0 }
+    }
+
+    /// One frame, given RNNoise's voice probability for it; `strength` scales the depth like it scales the denoising.
+    pub fn process(&mut self, frame: &mut [f32], voice: f32, strength: f32) {
+        if voice >= Self::OPEN_AT {
+            self.hold = Self::HOLD;
+        } else {
+            self.hold = self.hold.saturating_sub(1);
+        }
+        let floor = 10f32.powf(-Self::DEPTH_DB * strength / 20.0);
+        for x in frame.iter_mut() {
+            self.gain = if self.hold > 0 { 1.0 } else { (self.gain * Self::RELEASE).max(floor) };
+            *x *= self.gain;
+        }
+    }
+}
+
 pub struct Session {
     stop: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -234,6 +267,7 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
     let mut least_lead = usize::MAX;
     let mut pending: Vec<f32> = Vec::with_capacity(FRAME * 4); // mono, waiting for a whole RNNoise frame
     let mut denoiser = DenoiseState::new();
+    let mut gate = Gate::new();
     let mut clean = [0f32; FRAME];
     let mut scaled = [0f32; FRAME];
     let mut dry: VecDeque<f32> = std::iter::repeat_n(0.0, RNNOISE_DELAY).collect(); // the raw voice, lined up with RNNoise's output
@@ -289,12 +323,13 @@ unsafe fn run(s: Running, settings: &Settings, stop: &AtomicBool) -> Result<(), 
                 for (s, x) in scaled.iter_mut().zip(frame) {
                     *s = x * 32767.0;
                 }
-                denoiser.process_frame(&mut clean, &scaled);
+                let voice = denoiser.process_frame(&mut clean, &scaled);
                 for (c, &x) in clean.iter_mut().zip(frame) {
                     dry.push_back(x);
                     let raw = dry.pop_front().unwrap_or(0.0);
                     *c = raw + strength * (*c / 32767.0 - raw);
                 }
+                gate.process(&mut clean, voice, strength);
             } else {
                 clean.copy_from_slice(frame);
             }
@@ -435,6 +470,30 @@ fn steer(least_lead: usize, ahead: usize, slack: usize, period: usize) -> Steer 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_gate_leaves_voice_alone_and_closes_in_pauses() {
+        let mut gate = Gate::new();
+        let mut frame = [1f32; FRAME];
+        gate.process(&mut frame, 0.9, 1.0);
+        assert!(frame.iter().all(|&x| x == 1.0), "voice passes untouched");
+        for _ in 1..Gate::HOLD {
+            frame = [1.0; FRAME];
+            gate.process(&mut frame, 0.1, 1.0);
+        }
+        assert_eq!(frame[FRAME - 1], 1.0, "open through the hold: the gaps between words");
+        for _ in 0..20 {
+            frame = [1.0; FRAME];
+            gate.process(&mut frame, 0.1, 1.0);
+        }
+        assert!((frame[FRAME - 1] - 10f32.powf(-15.0 / 20.0)).abs() < 1e-4, "down 15 dB in a pause");
+        let mut off = Gate::new();
+        for _ in 0..100 {
+            frame = [1.0; FRAME];
+            off.process(&mut frame, 0.0, 0.0);
+        }
+        assert_eq!(frame[0], 1.0, "strength 0 gates nothing");
+    }
 
     #[test]
     fn the_lead_is_steered_from_one_number() {

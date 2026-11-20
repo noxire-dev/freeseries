@@ -353,3 +353,13 @@ FreeSeries logged 50-117 dry wakes. The hole is the headset's; Discord papers ov
 the second after it: each packet was written as it came, so the cable had nothing in hand at every
 wake until the stretch paid three periods back. Now a dry cable is primed again: 30 ms more silence,
 then clean voice with the lead back.
+
+## A gate in the pauses, and why not DeepFilterNet (2026-11-20)
+
+DeepFilterNet3 against RNNoise on `mic-ab/headset.wav`: DFN takes more rumble out under speech
+and between words, RNNoise leaves the real pauses quieter (-55 against -53 dBFS), and DFN costs
+1.7 dB of voice, 20 ms more delay, 12 times the CPU and 24 MB. Not clearly better: not adopted.
+Instead, RNNoise's own voice probability now drives a gate (`Gate`): 15 dB down at full strength
+once nothing has sounded like voice for 250 ms. On the same recording the pauses went from about
+-65 to -80 dBFS and no voiced 100 ms changed. Keyboard clicks in pauses are the case it is for; no
+recording of those yet.

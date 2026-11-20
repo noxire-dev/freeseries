@@ -28,6 +28,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             *s += (seed as f32 / u64::MAX as f32 - 0.5) * 2.0 * amp * 1.73; // uniform, RMS = amp
         }
     }
+    let gated = std::env::var("GATE").map_or(true, |v| v != "0"); // GATE=0: RNNoise alone, to compare
+    let mut gate = freeseries::mic::Gate::new();
     let mut state = DenoiseState::new();
     let mut out = Vec::with_capacity(raw.len());
     let mut clean = [0f32; FRAME];
@@ -35,13 +37,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut voiced = 0usize;
     for frame in raw.chunks_exact(FRAME) {
         let scaled: Vec<f32> = frame.iter().map(|x| x * 32767.0).collect();
-        if state.process_frame(&mut clean, &scaled) > 0.5 {
+        let voice = state.process_frame(&mut clean, &scaled);
+        if voice > 0.5 {
             voiced += 1;
         }
         for (c, &x) in clean.iter_mut().zip(frame) {
             dry.push_back(x);
             let r = dry.pop_front().unwrap();
             *c = r + strength * (*c / 32767.0 - r);
+        }
+        if gated {
+            gate.process(&mut clean, voice, strength);
         }
         out.extend_from_slice(&clean);
     }
