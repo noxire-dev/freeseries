@@ -18,6 +18,7 @@ use windows::core::{GUID, PCWSTR};
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
 use windows::Win32::Media::Audio::*;
+use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED, STGM_READ};
 use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 
@@ -155,6 +156,28 @@ struct Capture {
     next_position: u64,
     /// Silence played into the channel's own device for as long as we capture it (see `keep_awake`).
     awake: Option<(IAudioClient, IAudioRenderClient, u32)>,
+    /// The channel device's own volume and mute in Windows. Loopback hands us the sound before
+    /// Windows applies them, so muting "FreeSeries Main" or turning it down did nothing until we did.
+    windows_volume: Option<IAudioEndpointVolume>,
+    /// The Windows volume last applied, to ramp from on a change instead of clicking.
+    heard: f32,
+}
+
+/// The gain Windows would apply for this endpoint: 0 when muted or at the bottom of the slider.
+unsafe fn windows_gain(v: &IAudioEndpointVolume) -> f32 {
+    if v.GetMute().is_ok_and(|m| m.as_bool()) || v.GetMasterVolumeLevelScalar().is_ok_and(|s| s <= 0.0) {
+        return 0.0;
+    }
+    v.GetMasterVolumeLevel().map_or(1.0, |db| 10f32.powf(db / 20.0))
+}
+
+/// Scales interleaved `samples`, moving from `from` to `to` across them so a change never clicks.
+pub(crate) fn ramp(samples: &mut [f32], frame: usize, from: f32, to: f32) {
+    let frames = (samples.len() / frame).max(1) as f32;
+    for (i, f) in samples.chunks_mut(frame).enumerate() {
+        let g = from + (to - from) * (i + 1) as f32 / frames;
+        f.iter_mut().for_each(|x| *x *= g);
+    }
 }
 
 /// A stream opening or closing on an idle FreeSeries device (a notification sound, a Discord call
@@ -220,7 +243,10 @@ unsafe fn start(mix: &Mix, dsp: &Arc<Dsp>) -> Result<Running, String> {
         let last_packet_ms = Arc::new(AtomicU64::new(0));
         let queue = Arc::new(Mutex::new(VecDeque::with_capacity(ms(200))));
         let awake = keep_awake(&from).map_err(|e| log::warn!("channel {}: not kept awake, a sound starting on it may stall audio: {e}", source.channel)).ok();
+        let windows_volume = from.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).map_err(|e| log::warn!("channel {}: Windows' volume for it is not followed: {e}", source.channel)).ok();
         captures.push(Capture {
+            heard: windows_volume.as_ref().map_or(1.0, |v| windows_gain(v)),
+            windows_volume,
             awake,
             channel: source.channel.clone(),
             eq: Eq::new(&channel.eq.get(), rate as f64, out_ch),
@@ -261,6 +287,7 @@ unsafe fn start(mix: &Mix, dsp: &Arc<Dsp>) -> Result<Running, String> {
 
 /// Drains everything the device has for this channel into its queue.
 unsafe fn drain(c: &mut Capture, dsp: &Dsp, out_ch: usize, now_ms: u64, wake_gap_ms: f64, max_queued: usize) -> windows::core::Result<()> {
+    let windows = c.windows_volume.as_ref().map_or(1.0, |v| windows_gain(v));
     loop {
         if c.reader.GetNextPacketSize()? == 0 {
             return Ok(());
@@ -292,8 +319,9 @@ unsafe fn drain(c: &mut Capture, dsp: &Dsp, out_ch: usize, now_ms: u64, wake_gap
             c.eq.process(&mut c.scratch);
         }
         let volume = c.dsp.volume();
-        if volume != 1.0 {
-            c.scratch.iter_mut().for_each(|x| *x *= volume);
+        if volume != 1.0 || windows != 1.0 || c.heard != windows {
+            ramp(&mut c.scratch, out_ch, c.heard * volume, windows * volume);
+            c.heard = windows;
         }
         c.dsp.meter.feed(&c.scratch);
         {
@@ -396,4 +424,19 @@ unsafe fn run(mut s: Running, dsp: &Arc<Dsp>, stop: &AtomicBool) -> Result<(), S
     }
     let _ = CloseHandle(s.event);
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ramp;
+
+    #[test]
+    fn a_volume_change_ramps_across_the_packet_and_ends_on_the_new_level() {
+        let mut s = vec![1.0f32; 8]; // 4 stereo frames
+        ramp(&mut s, 2, 1.0, 0.0);
+        assert_eq!(s, [0.75, 0.75, 0.5, 0.5, 0.25, 0.25, 0.0, 0.0]);
+        let mut s = vec![1.0f32; 4];
+        ramp(&mut s, 2, 0.5, 0.5);
+        assert_eq!(s, [0.5; 4]);
+    }
 }

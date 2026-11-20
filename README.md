@@ -9,7 +9,7 @@ The one thing nobody else does: the EQ sits **after** Dolby Atmos for Headphones
 ## What it does
 
 - **Parametric EQ** on everything you hear, drawn and dragged on a live spectrum. Peak and shelf bands, preamp, soft limiter, import and export in Equalizer APO text, so Peace and AutoEq presets just work.
-- **Mixer**: Game, Media and Chat channels with their own volume and EQ. Drag Discord onto Chat and Spotify onto Media; FreeSeries pins them there and puts them back after a restart.
+- **Mixer**: Game, Media and Chat channels with their own volume and EQ. Drag Discord onto Chat and Spotify onto Media; FreeSeries pins them there and puts them back after a restart. Windows' own volume and mute on a FreeSeries device (the volume keys, the taskbar slider) work too.
 - **Headphone correction** per output from the AutoEq database, downloaded when you pick your model. Your sound presets sit on top of it.
 - **Outputs that follow you**: an ordered list of headphones and speakers. Headset off, audio moves to the monitor and its EQ; headset back, audio moves back.
 - **Microphone**: noise removal (RNNoise), strength slider, a mic EQ, and "hear yourself". Discord and games read a virtual microphone called FreeSeries Mic.
