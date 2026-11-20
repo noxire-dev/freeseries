@@ -64,6 +64,19 @@ pub(crate) unsafe fn format_of(client: &IAudioClient) -> Result<(Format, *mut WA
     Ok((Format { rate: (*f).nSamplesPerSec, channels: (*f).nChannels as usize }, f))
 }
 
+/// Asks Windows to convert between `rate` and the endpoint's own when they differ: rewrites the
+/// format to `rate` and returns the stream flags that make Windows resample. Many USB DACs and
+/// headset mics run at 44.1 kHz; without this their channel or the mic was simply left out.
+pub(crate) unsafe fn at_rate(f: *mut WAVEFORMATEX, rate: u32) -> u32 {
+    if (*f).nSamplesPerSec == rate {
+        return 0;
+    }
+    let block = (*f).nBlockAlign as u32;
+    (*f).nSamplesPerSec = rate;
+    (*f).nAvgBytesPerSec = rate * block;
+    AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY
+}
+
 pub(crate) fn enumerator() -> Result<IMMDeviceEnumerator, String> {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
@@ -181,7 +194,9 @@ struct Running {
 unsafe fn start(mix: &Mix, dsp: &Arc<Dsp>) -> Result<Running, String> {
     let render: IAudioClient = device(&mix.to)?.Activate(CLSCTX_ALL, None).map_err(|e| e.to_string())?;
     let (out, out_format) = format_of(&render)?;
-    let (rate, out_ch) = (out.rate, out.channels);
+    // Everything runs at the channels' rate (the virtual device's); the output is converted to it.
+    let first = mix.sources.iter().find_map(|s| device(&s.from).ok()?.Activate::<IAudioClient>(CLSCTX_ALL, None).ok().and_then(|c| format_of(&c).ok()));
+    let (rate, out_ch) = (first.map_or(out.rate, |(f, _)| f.rate), out.channels);
     let ms = |n: usize| rate as usize * out_ch * n / 1000;
 
     let mut captures = Vec::new();
@@ -226,7 +241,11 @@ unsafe fn start(mix: &Mix, dsp: &Arc<Dsp>) -> Result<Running, String> {
         return Err("none of the FreeSeries audio devices can be captured".into());
     }
 
-    render.Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 0, 0, out_format, None).map_err(|e| format!("output: {e}"))?;
+    let convert = at_rate(out_format, rate);
+    if convert != 0 {
+        log::info!("output runs at {} Hz: Windows converts from {rate} Hz", out.rate);
+    }
+    render.Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK | convert, 0, 0, out_format, None).map_err(|e| format!("output: {e}"))?;
     let event = CreateEventW(None, false, false, PCWSTR::null()).map_err(|e| e.to_string())?;
     render.SetEventHandle(event).map_err(|e| e.to_string())?;
     let writer: IAudioRenderClient = render.GetService().map_err(|e| e.to_string())?;

@@ -347,7 +347,11 @@ fn mic_apply(mic: &std::sync::Arc<MicShared>, generation: u64) {
             mic.alive.store(true, Relaxed);
         }
         Err(e) => {
-            log::warn!("mic: {e}");
+            // AUDCLNT_E_DEVICE_INVALIDATED, "element not found": the device under its saved id is gone.
+            let e = if e.contains("0x88890004") || e.contains("0x80070490") { format!("the microphone isn't plugged in ({e})") } else { e };
+            if s.error.as_ref() != Some(&e) {
+                log::warn!("mic: {e} (tried again every {} s, said once)", MIC_RETRY.as_secs());
+            }
             s.error = Some(e);
             retry();
         }
@@ -456,35 +460,97 @@ fn main_virtual_device(ours: &[DeviceInfo]) -> Option<String> {
 
 type WindowsHandback = handback::Handback<freeseries::default_output::WindowsDefaults, handback::FileStore>;
 
-/// Keeps the Windows default where the engine is: ours while it plays, the real output when it doesn't.
-/// A development build leaves the default alone: it belongs to the installed app running next to it.
-fn follow_engine(app: tauri::AppHandle, state_file: std::path::PathBuf) {
-    if cfg!(debug_assertions) {
-        return;
+/// How long a failure may last before it is more than a hiccup: the default is handed back, the
+/// tray says so, and Windows shows one notification.
+const HICCUP: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// One thing that can fail (the output, the mic), followed over time. Failures were found by friends
+/// in Discord calls or in the log (2026-11-20: the mic retried a missing headset 1411 times in 47
+/// minutes, and the app said nothing).
+#[derive(Default)]
+struct Failing {
+    since: Option<std::time::Instant>,
+    told: bool,
+}
+
+impl Failing {
+    /// Takes what is wrong now, if anything. Returns it once it has lasted `HICCUP`, and whether this
+    /// is the moment to tell the user (once per failure).
+    fn update(&mut self, problem: Option<String>, now: std::time::Instant) -> (Option<String>, bool) {
+        let Some(problem) = problem else {
+            *self = Failing::default();
+            return (None, false);
+        };
+        if now.duration_since(*self.since.get_or_insert(now)) < HICCUP {
+            return (None, false);
+        }
+        let tell = !self.told;
+        self.told = true;
+        (Some(problem), tell)
     }
+}
+
+/// Keeps the Windows default where the engine is: ours while it plays, the real output when it
+/// doesn't, or when it has been reconnecting for longer than a hiccup. Apps pinned to a channel are
+/// handed back with it (the UI puts them back once audio runs). And says what is wrong, in the
+/// tray's tooltip and once as a Windows notification.
+/// A development build leaves the default and the apps alone: they belong to the installed app.
+fn follow_engine(app: tauri::AppHandle, state_file: std::path::PathBuf) {
+    let installed = !cfg!(debug_assertions);
     // Outlives us, so it can act when we can't: a crash, End task.
-    if let Ok(exe) = std::env::current_exe() {
-        let spawned = std::process::Command::new(exe).arg(handback::WATCHDOG).arg(std::process::id().to_string()).arg(&state_file).creation_flags(0x0800_0000).spawn(); // CREATE_NO_WINDOW
-        if let Err(e) = spawned {
-            log::warn!("no watchdog: a crash would leave Windows playing into nothing ({e})");
+    if installed {
+        if let Ok(exe) = std::env::current_exe() {
+            let spawned = std::process::Command::new(exe).arg(handback::WATCHDOG).arg(std::process::id().to_string()).arg(&state_file).creation_flags(0x0800_0000).spawn(); // CREATE_NO_WINDOW
+            if let Err(e) = spawned {
+                log::warn!("no watchdog: a crash would leave Windows playing into nothing ({e})");
+            }
         }
     }
     std::thread::spawn(move || {
+        use tauri_plugin_notification::NotificationExt;
         let handback = WindowsHandback { defaults: freeseries::default_output::WindowsDefaults, store: handback::FileStore(state_file) };
         let mut playing_on: Option<String> = None;
+        let (mut output, mut mic) = (Failing::default(), Failing::default());
+        let mut tooltip = String::new();
         loop {
-            let now = match app.state::<App>().engine.status() {
-                Status::Running { output } => Some(output),
+            let now = std::time::Instant::now();
+            let status = app.state::<App>().engine.status();
+            let (output_problem, tell_output) = output.update(match &status { Status::Reconnecting { error } => Some(format!("No sound: {error}")), _ => None }, now);
+            let mic_error = app.state::<Mic>().0.state.lock().unwrap().error.clone(); // set only while the mic is on
+            let (mic_problem, tell_mic) = mic.update(mic_error.map(|e| format!("Mic off: {e}")), now);
+
+            let target = match &status {
+                Status::Running { output } => Some(output.clone()),
                 Status::Stopped => None,
+                Status::Reconnecting { .. } if output_problem.is_some() => None,
                 Status::Reconnecting { .. } => playing_on.clone(), // a hiccup, not an absence
             };
-            if now != playing_on {
+            if installed && target != playing_on {
                 let ours = virtual_devices();
-                match &now {
+                match &target {
                     Some(output) => handback.running(output, main_virtual_device(&ours).as_deref()),
-                    None => handback.away(&ours.into_iter().map(|d| d.id).collect::<Vec<_>>()),
+                    None => {
+                        release_apps(app.state::<Box<dyn AppRouting>>().inner().as_ref());
+                        handback.away(&ours.into_iter().map(|d| d.id).collect::<Vec<_>>());
+                    }
                 }
-                playing_on = now;
+            }
+            playing_on = target;
+
+            for (problem, tell) in [(&output_problem, tell_output), (&mic_problem, tell_mic)] {
+                if let (true, Some(problem)) = (tell, problem) {
+                    log::warn!("telling the user: {problem}");
+                    let _ = app.notification().builder().title("FreeSeries").body(problem.as_str()).show();
+                }
+            }
+            let problems: Vec<String> = [output_problem, mic_problem].into_iter().flatten().collect();
+            let text = std::iter::once(app.package_info().name.clone()).chain(problems.iter().cloned()).collect::<Vec<_>>().join("
+");
+            if text != tooltip {
+                if let Some(tray) = app.tray_by_id(TRAY) {
+                    let _ = tray.set_tooltip(Some(&text));
+                }
+                tooltip = text;
             }
             std::thread::sleep(std::time::Duration::from_secs(1));
         }
@@ -496,18 +562,20 @@ fn watchdog(pid: &str, state_file: &str) {
     freeseries::default_output::wait_for_exit(pid.parse().unwrap_or(0));
     let ours: Vec<String> = virtual_devices().into_iter().map(|d| d.id).collect();
     WindowsHandback { defaults: freeseries::default_output::WindowsDefaults, store: handback::FileStore(state_file.into()) }.away(&ours);
+    release_apps(&WindowsRouting);
 }
 
 /// Quitting takes the engine away, and with it everything that listens to the virtual devices. Apps
 /// the Mixer moved onto a channel are pinned there by Windows, so they would stay silent even after
 /// the user points Windows back at their headphones. They are handed back first; the UI remembers
-/// where they belong and puts them back when FreeSeries runs again.
-fn release_apps(app: &tauri::AppHandle) {
+/// where they belong and puts them back when FreeSeries runs again. The same goes for Stop, an
+/// engine that stays down, and a crash (the watchdog).
+fn release_apps(routing: &dyn AppRouting) {
     let ours: Vec<String> = virtual_devices().into_iter().map(|d| d.id).collect();
-    match freeseries::routing::release(app.state::<Box<dyn AppRouting>>().inner().as_ref(), &ours) {
-        Ok(released) if !released.is_empty() => log::info!("quitting: handed back to the Windows default: {}", released.join(", ")),
+    match freeseries::routing::release(routing, &ours) {
+        Ok(released) if !released.is_empty() => log::info!("audio stopped: handed back to the Windows default: {}", released.join(", ")),
         Ok(_) => {}
-        Err(e) => log::warn!("quitting: couldn't hand apps back to the Windows default: {e}"),
+        Err(e) => log::warn!("audio stopped: couldn't hand apps back to the Windows default: {e}"),
     }
 }
 
@@ -576,7 +644,7 @@ fn tray(app: &tauri::App) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => show_main(app),
             "quit" => {
-                release_apps(app);
+                release_apps(app.state::<Box<dyn AppRouting>>().inner().as_ref());
                 if !cfg!(debug_assertions) {
                     if let Ok(dir) = app.path().app_data_dir() {
                         let ours: Vec<String> = virtual_devices().into_iter().map(|d| d.id).collect();
@@ -631,6 +699,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(
             // No shortcuts yet: the UI switches them on (set_hotkeys) once it knows the user's setting.
             tauri_plugin_global_shortcut::Builder::new()
@@ -729,4 +798,21 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Failing, HICCUP};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn a_failure_is_told_once_after_a_hiccup() {
+        let (mut f, t) = (Failing::default(), Instant::now());
+        let gone = || Some("gone".to_string());
+        assert_eq!(f.update(gone(), t), (None, false), "a hiccup says nothing");
+        assert_eq!(f.update(gone(), t + HICCUP), (gone(), true), "lasting: shown and told");
+        assert_eq!(f.update(gone(), t + HICCUP * 2), (gone(), false), "told once");
+        assert_eq!(f.update(None, t + HICCUP * 3), (None, false));
+        assert_eq!(f.update(gone(), t + HICCUP * 3 + Duration::from_secs(1)), (None, false), "a new failure starts over");
+    }
 }

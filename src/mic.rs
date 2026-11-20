@@ -7,7 +7,7 @@
 
 use crate::engine::{DeviceInfo, PeakMeter, PresetCell};
 use crate::eq::{self, Eq};
-use crate::native::{device, enumerator, format_of, CAPTURE_BUFFER_HNS, ID_PREFIX};
+use crate::native::{at_rate, device, enumerator, format_of, CAPTURE_BUFFER_HNS, ID_PREFIX};
 use crate::spectrum::Tap;
 use crate::wasapi::{join_pro_audio, Feed, Tuning};
 use nnnoiseless::DenoiseState;
@@ -168,17 +168,15 @@ unsafe fn open(from: &str, into: &str, monitor: Option<&str>) -> Result<Running,
     let (input, in_format) = format_of(&capture)?;
     let render: IAudioClient = device(into)?.Activate(CLSCTX_ALL, None).map_err(|e| e.to_string())?;
     let (output, out_format) = format_of(&render)?;
-    // ponytail: no resampler yet. RNNoise wants 48 kHz, and the cable is set to it.
-    if input.rate != RNNOISE_RATE || output.rate != RNNOISE_RATE {
-        return Err(format!("the mic runs at {} Hz and the cable at {} Hz; both must be {RNNOISE_RATE} Hz", input.rate, output.rate));
-    }
+    // RNNoise wants 48 kHz: Windows converts a mic or cable that runs at another rate.
+    let (convert_in, convert_out) = (at_rate(in_format, RNNOISE_RATE), at_rate(out_format, RNNOISE_RATE));
     // An output as the source: capture its loopback (the delay measurement plays a click into one).
     let flow = source.cast::<IMMEndpoint>().and_then(|e| e.GetDataFlow()).map_err(|e| e.to_string())?;
-    let flags = if flow == eRender { AUDCLNT_STREAMFLAGS_LOOPBACK } else { 0 };
+    let flags = if flow == eRender { AUDCLNT_STREAMFLAGS_LOOPBACK } else { 0 } | convert_in;
     capture.Initialize(AUDCLNT_SHAREMODE_SHARED, flags, CAPTURE_BUFFER_HNS, 0, in_format, None).map_err(|e| format!("mic: {e}"))?;
     let reader: IAudioCaptureClient = capture.GetService().map_err(|e| e.to_string())?;
     // 40 ms of room: the default (22 ms on VB-CABLE) cannot hold the three periods `run` keeps ahead.
-    render.Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, CABLE_BUFFER_HNS, 0, out_format, None).map_err(|e| format!("cable: {e}"))?;
+    render.Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK | convert_out, CABLE_BUFFER_HNS, 0, out_format, None).map_err(|e| format!("cable: {e}"))?;
     let event = CreateEventW(None, false, false, PCWSTR::null()).map_err(|e| e.to_string())?;
     render.SetEventHandle(event).map_err(|e| e.to_string())?;
     let writer: IAudioRenderClient = render.GetService().map_err(|e| e.to_string())?;
@@ -193,17 +191,15 @@ unsafe fn open(from: &str, into: &str, monitor: Option<&str>) -> Result<Running,
     });
     capture.Start().map_err(|e| e.to_string())?;
     render.Start().map_err(|e| e.to_string())?;
-    log::info!("mic: {} ch at {} Hz -> cable {} ch, {} ms of mic room, {} ms of cable room{}", input.channels, input.rate, output.channels, capture.GetBufferSize().map_or(0, |f| f * 1000 / input.rate), out_size * 1000 / output.rate, if monitor.is_some() { ", played back" } else { "" });
-    Ok(Running { capture, reader, in_ch: input.channels, render, writer, event, out_size, out_ch: output.channels, rate: output.rate, monitor })
+    log::info!("mic: {} ch at {} Hz -> cable {} ch, {} ms of mic room, {} ms of cable room{}", input.channels, input.rate, output.channels, capture.GetBufferSize().map_or(0, |f| f * 1000 / RNNOISE_RATE), out_size * 1000 / RNNOISE_RATE, if monitor.is_some() { ", played back" } else { "" });
+    Ok(Running { capture, reader, in_ch: input.channels, render, writer, event, out_size, out_ch: output.channels, rate: RNNOISE_RATE, monitor })
 }
 
 unsafe fn open_monitor(id: &str) -> Result<Monitor, String> {
     let client: IAudioClient = device(id)?.Activate(CLSCTX_ALL, None).map_err(|e| e.to_string())?;
     let (info, format) = format_of(&client)?;
-    if info.rate != RNNOISE_RATE {
-        return Err(format!("the output runs at {} Hz, not {RNNOISE_RATE}", info.rate));
-    }
-    client.Initialize(AUDCLNT_SHAREMODE_SHARED, 0, MONITOR_BUFFER_HNS, 0, format, None).map_err(|e| e.to_string())?;
+    let convert = at_rate(format, RNNOISE_RATE);
+    client.Initialize(AUDCLNT_SHAREMODE_SHARED, convert, MONITOR_BUFFER_HNS, 0, format, None).map_err(|e| e.to_string())?;
     let writer: IAudioRenderClient = client.GetService().map_err(|e| e.to_string())?;
     let size = client.GetBufferSize().map_err(|e| e.to_string())?;
     client.Start().map_err(|e| e.to_string())?;

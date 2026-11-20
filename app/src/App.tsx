@@ -472,6 +472,15 @@ export default function App(p: {
             <small>{statusDetail}</small>
           </span>
         </button>
+        {mic.on && micStatus.error && (
+          <button className="status" onClick={() => setView("mic")} title={micStatus.error}>
+            <span className="status-dot is-reconnecting" />
+            <span>
+              <strong>Mic off</strong>
+              <small>{micStatus.error}</small>
+            </span>
+          </button>
+        )}
       </aside>
 
       <main className="main">
